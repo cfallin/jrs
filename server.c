@@ -45,9 +45,6 @@ jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port)
         goto out;
     }
 
-    /* set close-on-exec and nonblocking */
-    fcntl(ret->socket, F_SETFD, fcntl(ret->socket, F_GETFD) | FD_CLOEXEC);
-
     memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
     sin.sin_port = htons(port);
@@ -61,8 +58,6 @@ jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port)
         rv = APR_FROM_OS_ERROR(errno);
         goto out;
     }
-
-    fcntl(ret->socket, F_SETFD, fcntl(ret->socket, F_GETFD) | O_NONBLOCK);
 
     /* set up a self-pipe to handle sigchld notifications */
     if (pipe(ret->selfpipe)) {
@@ -221,6 +216,9 @@ jrs_server_run(jrs_server_t *server)
     fd_set rfds, efds, wfds;
 
     assert(!active_server);
+
+    /* set close-on-exec and nonblocking on listening socket */
+    fcntl(server->socket, F_SETFD, fcntl(server->socket, F_GETFD) | FD_CLOEXEC);
 
     /* set SIGCHLD handler */
     apr_signal(SIGCHLD, jrs_server_sigchld);

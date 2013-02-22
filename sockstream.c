@@ -199,10 +199,20 @@ jrs_sockstream_sendrecv(jrs_sockstream_t *sockstream, int rflag)
         uint8_t *data;
         int datalen;
         datalen = jrs_fifo_peek_nocopy(sockstream->writefifo, &data,
-                jrs_fifo_avail(sockstream->writefifo));
-        written = send(sockstream->sockfd, data, datalen, MSG_DONTWAIT);
-        if (written > 0)
-            jrs_fifo_advance(sockstream->writefifo, written);
+                1024);
+
+        if (datalen) {
+            if (sockstream->crypto) {
+                uint8_t buf[1024];
+                RC4(&sockstream->writekey, datalen, data, buf);
+                written = send(sockstream->sockfd, buf, datalen, MSG_DONTWAIT);
+            }
+            else {
+                written = send(sockstream->sockfd, data, datalen, MSG_DONTWAIT);
+            }
+            if (written > 0)
+                jrs_fifo_advance(sockstream->writefifo, written);
+        }
 
         if (written < 0 &&
                 (errno == ECONNREFUSED ||
@@ -216,12 +226,19 @@ jrs_sockstream_sendrecv(jrs_sockstream_t *sockstream, int rflag)
     /* is there anything to receive? */
     while (1) {
         ssize_t readbytes;
-        uint8_t buf[1024];
+        uint8_t buf[1024], buf2[1024];
         int i;
 
         readbytes = recv(sockstream->sockfd, &buf, sizeof(buf), MSG_DONTWAIT);
-        if (readbytes > 0)
-            jrs_fifo_write(sockstream->readfifo, buf, readbytes);
+        if (readbytes > 0) {
+            if (sockstream->crypto) {
+                RC4(&sockstream->readkey, readbytes, buf, buf2);
+                jrs_fifo_write(sockstream->readfifo, buf2, readbytes);
+            }
+            else {
+                jrs_fifo_write(sockstream->readfifo, buf, readbytes);
+            }
+        }
 
         if (readbytes == 0 && rflag) /* EOF */
             sockstream->err = 1;
@@ -250,6 +267,30 @@ int
 jrs_sockstream_hasline(jrs_sockstream_t *sockstream)
 {
     return sockstream->read_lines;
+}
+
+int
+jrs_sockstream_read(jrs_sockstream_t *sockstream, uint8_t *buf, int size)
+{
+    int readbytes = 0;
+    if (sockstream->err)
+        return 1;
+
+    while (readbytes < size) {
+        uint8_t *fifobuf;
+        int availlen = jrs_fifo_peek_nocopy(sockstream->readfifo, &fifobuf, size);
+
+        if (availlen == 0)
+            break;
+
+        if (availlen < (size - readbytes))
+            availlen = (size - readbytes);
+
+        memcpy(buf + readbytes, fifobuf, availlen);
+        readbytes += availlen;
+    }
+
+    return readbytes;
 }
 
 int
@@ -293,4 +334,13 @@ int
 jrs_sockstream_flushed(jrs_sockstream_t *sockstream)
 {
     return !jrs_fifo_avail(sockstream->writefifo);
+}
+
+void
+jrs_sockstream_set_rc4(jrs_sockstream_t *sockstream,
+        RC4_KEY *sendkey, RC4_KEY *recvkey)
+{
+    sockstream->crypto = 1;
+    memcpy(&sockstream->writekey, sendkey, sizeof(RC4_KEY));
+    memcpy(&sockstream->readkey,  recvkey, sizeof(RC4_KEY));
 }

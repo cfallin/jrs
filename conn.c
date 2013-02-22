@@ -157,6 +157,7 @@ conn_cmd_stats(jrs_conn_t *conn)
     float loadavg;
     int cores;
     uint64_t memory;
+    char *p;
 
     cores = 0;
     f = fopen("/proc/cpuinfo", "r");
@@ -174,7 +175,9 @@ conn_cmd_stats(jrs_conn_t *conn)
     f = fopen("/proc/loadavg", "r");
     if (f) {
         if (fgets(line, sizeof(line), f)) {
-            int scanned = fscanf(f, "%f", &loadavg);
+            for (p = line; *p && *p != ' '; p++) ;
+            *p = 0;
+            loadavg = strtof(line, NULL);
         }
         fclose(f);
     }

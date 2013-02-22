@@ -5,6 +5,8 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <string.h>
+#include <unistd.h>
+#include <syslog.h>
 
 #include <apr_general.h>
 #include <apr_pools.h>
@@ -15,10 +17,16 @@
 #include "util.h"
 #include "server.h"
 
-/* to support re-opening the logfile on SIGHUP (for log rotation) */
-static const char *logfile_name = NULL;
-
 int shutdown_signal = 0;
+int jrs_log_syslog = 0;
+char pidfilename[1024] = { 0, };
+
+void
+pidfile_remove()
+{
+    if (pidfilename[0])
+        unlink(pidfilename);
+}
 
 void
 handle_shutdown_signal(int sig)
@@ -26,36 +34,16 @@ handle_shutdown_signal(int sig)
     shutdown_signal = 1;
 }
 
-void handle_sighup(int sig)
-{
-    if (logfile_name) {
-        int fd;
-
-        /* re-open the logfile */
-        fd = open(logfile_name, O_WRONLY | O_APPEND);
-        if (fd != -1) {
-            close(1);
-            close(2);
-            dup2(fd, 1);
-            dup2(fd, 2);
-            close(fd);
-        }
-    }
-    else
-        /* if there is no log file, SIGHUP is a deadly signal */
-        handle_shutdown_signal(SIGHUP);
-}
-
 static void
 usage()
 {
-    fprintf(stderr, "Usage: jrs-daemon [-f] [-l log] [-p port]\n"
-            "    -f      : run in foreground\n"
-            "    -l log  : log into specified logfile\n"
-            "    -p port : listen on specified port\n"
+    fprintf(stderr, "Usage: jrs-daemon [-f] [-p port]\n"
+            "    -f            : run in foreground\n"
+            "    -l port       : listen on specified port\n"
+            "    -p pidfile    : write server pid to pidfile\n"
+            "    -s secretfile : use the given shared-secret file\n"
             "\n"
-            "    A port must be specified. A log file must be specified\n"
-            "    unless foreground mode is specified.\n");
+            "    A port must be specified.\n");
 }
 
 int
@@ -71,7 +59,6 @@ main(int argc,
     apr_getopt_t *opt;
     char option_ch;
     const char *option_arg;
-    const char *option_logfile = NULL;
     int option_port = 0;
     int option_foreground = 0;
     jrs_server_t *serv;
@@ -101,13 +88,17 @@ main(int argc,
     while ((rv = apr_getopt(opt, "l:p:f", &option_ch, &option_arg)) ==
             APR_SUCCESS) {
         switch (option_ch) {
-            case 'l': /* log file */
-                option_logfile = option_arg;
-                break;
+            case 'l': /* listen port */
+                option_port = atoi(option_arg);
                 break;
 
-            case 'p': /* port */
-                option_port = atoi(option_arg);
+            case 'p': /* pid file */
+                {
+                    char cwdbuf[1024];
+                    snprintf(pidfilename, sizeof(pidfilename),
+                            "%s/%s", getcwd(cwdbuf, sizeof(cwdbuf)),
+                            option_arg);
+                }
                 break;
 
             case 'f':
@@ -117,8 +108,7 @@ main(int argc,
     }
 
     /* Validate args */
-    if ((option_port == 0) ||
-            (!option_foreground && !option_logfile)) {
+    if (option_port == 0) {
         usage();
         return 1;
     }
@@ -126,45 +116,41 @@ main(int argc,
     /* Daemonize */
     if (!option_foreground) {
         apr_proc_detach(1);
+        jrs_log_syslog = 1;
+        openlog("jrs", LOG_PID, LOG_USER);
     }
 
-    /* Open the logfile and replace stdout/stderr */
-    if (option_logfile) {
-        int fd;
-        fd = open(option_logfile, O_WRONLY | O_APPEND);
-        if (fd == -1) {
-            perror("Error opening log file");
-            return 1;
+    /* write pid file */
+    if (pidfilename[0]) {
+        FILE *pidfile_f = fopen(pidfilename, "w");
+        if (!pidfile_f)
+            jrs_log("could not open pid file '%s'.", pidfilename);
+        else {
+            fprintf(pidfile_f, "%d\n", getpid());
+            fclose(pidfile_f);
+            atexit(pidfile_remove);
         }
-        fflush(stdout);
-        fflush(stderr);
-        close(1);
-        close(2);
-        dup2(fd, 1);
-        dup2(fd, 2);
-        close(fd);
+    }
 
-        logfile_name = strdup(option_logfile);
+    /* Init the server (this opens and binds the listener) */
+    rv = jrs_server_init(&serv, rootpool, option_port);
+    if (rv != APR_SUCCESS) {
+        apr_perror(rv, "Error initializing server (binding to socket)");
+        return 1;
     }
 
     /* Set up signal handlers */
-    apr_signal(SIGHUP, handle_sighup);
     apr_signal(SIGTERM, handle_shutdown_signal);
     apr_signal(SIGSTOP, handle_shutdown_signal);
     apr_signal(SIGINT,  handle_shutdown_signal);
 
     jrs_log("starting server");
 
-    /* Start the server! */
-    rv = jrs_server_init(&serv, rootpool, option_port);
-    if (rv != APR_SUCCESS) {
-        apr_perror(rv, "Error initializing server");
-        return 1;
-    }
-
     jrs_server_run(serv);
 
     jrs_server_destroy(serv);
+
+    jrs_log("shutting down.");
 
     return 0;
 }
