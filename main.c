@@ -17,6 +17,7 @@
 #include "util.h"
 #include "server.h"
 #include "client.h"
+#include "queue.h"
 
 int shutdown_signal = 0;
 int jrs_log_syslog = 0;
@@ -41,7 +42,8 @@ usage()
     fprintf(stderr, "\n"
             "Usage: jrs [options]\n"
             "    -d             : daemon mode\n"
-            "    -c             : client mode\n"
+            "    -q             : queue-manager mode\n"
+            "    -c             : raw client mode\n"
             "    -s secretfile  : use the given shared-secret file\n"
             "\n"
             " in daemon mode:\n"
@@ -53,9 +55,43 @@ usage()
             "    -r remote-host : connect to remote host\n"
             "    -l port        : connect to the given port on the remote host\n"
             "\n"
+            "  in queue-manager mode:\n"
+            "    -x policy.lua  : execute the given queue-manager policy\n"
+            "    -e nodes.list  : use the given list of nodes, one per line\n"
+            "\n"
             "In all cases, a secret file and a port must be specified. In client\n"
             "mode, a remote host must also be specified.\n"
             "\n");
+}
+
+static char *
+handle_filepath(const char *option, char **ret, int size)
+{
+    if (!*ret) {
+        *ret = malloc(1024);
+        size = 1024;
+    }
+
+    if (option[0] != '/') {
+        char cwdbuf[1024];
+        snprintf(*ret, size,
+                "%s/%s", getcwd(cwdbuf, sizeof(cwdbuf)),
+                option);
+    }
+    else
+        strncpy(*ret, option, size);
+}
+
+static void
+cluster_basic_policy(cluster_t *cluster, cluster_ops_t *ops)
+{
+    node_t *node;
+
+    DLIST_FOREACH(&cluster->nodes, node) {
+        ops->updatenode(node);
+
+        printf("node %s: %d cores, %f loadavg", node->hostname, node->cores, node->loadavg);
+    }
 }
 
 int
@@ -76,8 +112,11 @@ main(int argc,
     int option_foreground = 0;
     int option_daemonmode = 0;
     int option_clientmode = 0;
+    int option_queuemode = 0;
     char *option_secretfile = NULL;
     char *option_remotehost = NULL;
+    char *option_nodelist = NULL;
+    char *option_policy = NULL;
 
     jrs_server_t *serv;
     jrs_client_t *client;
@@ -103,7 +142,7 @@ main(int argc,
         return 1;
     }
 
-    while ((rv = apr_getopt(opt, "dcs:l:p:fr:", &option_ch, &option_arg)) ==
+    while ((rv = apr_getopt(opt, "dcs:l:p:fr:qx:e:", &option_ch, &option_arg)) ==
             APR_SUCCESS) {
         switch (option_ch) {
             case 'l': /* listen port */
@@ -111,16 +150,7 @@ main(int argc,
                 break;
 
             case 'p': /* pid file */
-                {
-                    if (option_arg[0] != '/') {
-                        char cwdbuf[1024];
-                        snprintf(pidfilename, sizeof(pidfilename),
-                                "%s/%s", getcwd(cwdbuf, sizeof(cwdbuf)),
-                                option_arg);
-                    }
-                    else
-                        strncpy(pidfilename, option_arg, sizeof(pidfilename));
-                }
+                handle_filepath(option_arg, (char **)&pidfilename, sizeof(pidfilename));
                 break;
 
             case 'f':
@@ -135,31 +165,37 @@ main(int argc,
                 option_clientmode = 1;
                 break;
 
+            case 'q':
+                option_queuemode = 1;
+                break;
+
+            case 'x':
+                option_policy = NULL;
+                handle_filepath(option_arg, &option_policy, 0);
+                break;
+
+            case 'e':
+                option_nodelist = NULL;
+                handle_filepath(option_arg, &option_nodelist, 0);
+                break;
+
             case 'r':
                 option_remotehost = strdup(option_arg);
                 break;
 
             case 's':
-                {
-                    if (option_arg[0] != '/') {
-                        option_secretfile = malloc(1024);
-                        char cwdbuf[1024];
-                        snprintf(option_secretfile, 1024,
-                                "%s/%s", getcwd(cwdbuf, sizeof(cwdbuf)),
-                                option_arg);
-                    }
-                    else
-                        strncpy(option_secretfile, option_arg,
-                                sizeof(option_secretfile));
-                }
+                option_secretfile = NULL;
+                handle_filepath(option_arg,
+                        &option_secretfile, 0);;
                 break;
         }
     }
 
     /* Validate args */
-    if ((!option_clientmode && !option_daemonmode) ||
+    if ((!option_clientmode && !option_daemonmode && !option_queuemode) ||
             (option_clientmode && (!option_remotehost || !option_port)) ||
             (option_daemonmode && (!option_port)) ||
+            (option_queuemode  && (!option_policy || !option_nodelist)) ||
             (!option_secretfile)) {
         usage();
         return 1;
@@ -222,6 +258,60 @@ main(int argc,
         jrs_client_run(client);
 
         jrs_client_destroy(client);
+
+        return 0;
+    }
+
+    else if (option_queuemode) {
+        FILE *f;
+        char buf[1024];
+        cluster_t *cluster;
+
+        /* set up the config */
+        config_t config;
+        config.port = option_port;
+        config.secretfile = option_secretfile;
+        int nodeN = 4096;
+        config.nodes = malloc(sizeof(char *) * nodeN);
+
+        char **nodelistp = config.nodes, **nodelistend = (config.nodes + nodeN - 1);
+
+        f = fopen(option_nodelist, "r");
+        while (fgets(buf, sizeof(buf), f) &&
+                nodelistp < nodelistend) {
+            /* chop off newline */
+            char *p = buf + strlen(buf) - 1;
+            if (p >= buf && *p == '\n')
+                *p = 0;
+
+            /* add to nodelist */
+            *nodelistp++ = strdup(buf);
+        }
+        fclose(f);
+        *nodelistp = NULL;
+
+        /* instantiate the cluster structures */
+        rv = cluster_create(&cluster, &config, rootpool);
+
+        if (rv != APR_SUCCESS) {
+            jrs_log("Error initializing queue manager.");
+            return 1;
+        }
+
+        /* Set up signal handlers */
+        apr_signal(SIGTERM, handle_shutdown_signal);
+        apr_signal(SIGSTOP, handle_shutdown_signal);
+        apr_signal(SIGINT,  handle_shutdown_signal);
+
+        jrs_log("starting queue manager");
+
+        /* run the basic policy */
+        /* TODO: Lua integration */
+        cluster_run(cluster, cluster_basic_policy);
+
+        jrs_log("shutting down");
+
+        cluster_destroy(cluster);
 
         return 0;
     }

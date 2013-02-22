@@ -333,6 +333,7 @@ int
 jrs_sockstream_write(jrs_sockstream_t *sockstream, uint8_t *buf, int size)
 {
     jrs_fifo_write(sockstream->writefifo, buf, size);
+    return 0;
 }
 
 int
