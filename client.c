@@ -16,7 +16,7 @@ jrs_client_init(jrs_client_t **outclient, apr_pool_t *rootpool,
     apr_pool_t *subpool;
     jrs_client_t *client;
     char portstr[16];
-    struct addrinfo *addrinfo;
+    struct addrinfo *addrinfo, hints;
     int sockfd;
 
     /* alloc memory first */
@@ -36,7 +36,11 @@ jrs_client_init(jrs_client_t **outclient, apr_pool_t *rootpool,
     /* look up the host */
     rv = APR_ENOENT;
     snprintf(portstr, sizeof(portstr), "%d", port);
-    rc = getaddrinfo(remotehost, portstr, NULL, &addrinfo);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = 0;
+    hints.ai_flags = 0;
+    rc = getaddrinfo(remotehost, portstr, &hints, &addrinfo);
     if (rc || !addrinfo) {
         apr_pool_destroy(subpool);
         return rv;
@@ -56,6 +60,7 @@ jrs_client_init(jrs_client_t **outclient, apr_pool_t *rootpool,
             continue;
 
         connected = 1;
+        break;
     }
 
     if (!connected) {

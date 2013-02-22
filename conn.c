@@ -143,6 +143,8 @@ conn_cmd_kill(jrs_conn_t *conn, char *args, int len)
         }
     }
 
+    jrs_sockstream_write(conn->sockstream, "\r\n", 2);
+
     return 0;
 }
 

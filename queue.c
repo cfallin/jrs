@@ -387,7 +387,7 @@ start_connection(node_t *node)
     int rc;
     int sockfd;
     char portstr[16];
-    struct addrinfo *addrinfo;
+    struct addrinfo *addrinfo, hints;
 
     if (node->sockstream)
         jrs_sockstream_destroy(node->sockstream);
@@ -398,21 +398,33 @@ start_connection(node_t *node)
     /* look up the host */
     rv = APR_ENOENT;
     snprintf(portstr, sizeof(portstr), "%d", node->cluster->config->port);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = 0;
+    hints.ai_flags = 0;
     rc = getaddrinfo(node->hostname, portstr, NULL, &addrinfo);
     if (rc || !addrinfo)
         return;
 
     /* create a socket */
-    sockfd = socket(addrinfo->ai_family, addrinfo->ai_socktype,
-            addrinfo->ai_protocol);
-    if (sockfd == -1) {
-        return;
+    int connected = 0;
+    for (; addrinfo; addrinfo = addrinfo->ai_next) {
+
+        sockfd = socket(addrinfo->ai_family, addrinfo->ai_socktype,
+                addrinfo->ai_protocol);
+
+        if (sockfd == -1)
+            continue;
+
+        if (connect(sockfd, addrinfo->ai_addr, addrinfo->ai_addrlen) == -1)
+            continue;
+
+        connected = 1;
+        break;
     }
 
-    if (connect(sockfd, addrinfo->ai_addr, addrinfo->ai_addrlen) == -1) {
-        close(sockfd);
+    if (!connected)
         return;
-    }
 
     /* create a sockstream */
     rv = jrs_sockstream_create(&node->sockstream, sockfd, node->pool);
