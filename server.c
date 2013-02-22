@@ -9,6 +9,7 @@
 #include <netinet/in.h>
 #include <fcntl.h>
 #include <assert.h>
+#include <sys/time.h>
 
 #include <apr_signal.h>
 #include <apr_general.h>
@@ -23,6 +24,7 @@ jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port,
     jrs_server_t *ret = NULL;
     apr_status_t rv = 0;
     struct sockaddr_in sin;
+    struct timeval tv;
 
     rv = apr_pool_create(&subpool, pool);
     if (rv != APR_SUCCESS)
@@ -70,6 +72,13 @@ jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port,
     fcntl(ret->selfpipe[1], F_SETFL, fcntl(ret->selfpipe[0], F_GETFL) | O_NONBLOCK);
 
     ret->secretfile = secretfile;
+
+    if (gettimeofday(&tv, NULL) == 0) {
+        ret->jobid = tv.tv_sec * 1000000 + tv.tv_usec;
+    }
+    else {
+        ret->jobid = rand();
+    }
 
     *server = ret;
     return APR_SUCCESS;
