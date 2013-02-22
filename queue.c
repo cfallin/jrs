@@ -366,7 +366,10 @@ req_done(req_t *req, uint8_t *buf, int len)
             case 'N':
                 break;
             case 'R':
-                req->node->cluster->alloced_cores = atoi(buf);
+                /* don't accept an allocation of zero cores if we requested
+                 * some. */
+                if (atoi(buf) > 0 || req->node->cluster->req_cores == 0)
+                    req->node->cluster->alloced_cores = atoi(buf);
                 break;
         }
     }

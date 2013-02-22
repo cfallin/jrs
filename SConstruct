@@ -2,7 +2,7 @@ import os
 
 ccflags = '-O3 -g'
 
-if False:
+if True:
     # static linking
     env = Environment(ENV=os.environ,CPPPATH='.',CCFLAGS=ccflags, LINKFLAGS='-static', LIBS=['crypto', 'ssl', 'z', 'dl'])
     env.ParseConfig('apr-config --cflags --includes --libs --link-ld')

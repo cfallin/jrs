@@ -103,7 +103,7 @@ queue_policy(cluster_t *cluster, cluster_ops_t *ops)
     node_t *node;
     job_t *job;
     policystate_t *st;
-    int running, queued;
+    int running, queued, sent;
     int delta;
     uint64_t now = time_usec();
 
@@ -134,8 +134,9 @@ queue_policy(cluster_t *cluster, cluster_ops_t *ops)
             }
         }
 
-        /* count running jobs and queued jobs. */
+        /* count running jobs, sent jobs, and queued jobs. */
         running = 0;
+        sent = 0;
         DLIST_FOREACH(&cluster->nodes, node) {
             node->running = 0;
             if (node->mgr) continue;
@@ -144,12 +145,21 @@ queue_policy(cluster_t *cluster, cluster_ops_t *ops)
                 running++;
                 node->running++;
             }
+            sent += node->sent;
         }
 
         queued = 0;
         DLIST_FOREACH(&cluster->jobs, job) {
             queued++;
         }
+
+        /* check for stop-state: no queued or running jobs and no queued 'sent'
+         * jobs. */
+        if (running + queued == 0) {
+            jrs_log("All jobs completed.");
+            shutdown_signal = 1;
+        }
+
 
         /* always request exactly the number of running + queued jobs as cores
          * (this is a maximum; we likely won't get it if we have many queued jobs)

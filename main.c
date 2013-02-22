@@ -133,7 +133,6 @@ main(int argc,
         apr_perror(rv, "Error starting APR");
         return 1;
     }
-    atexit(apr_terminate);
 
     /* Set up a root pool from which all subpools are allocated */
     rv = apr_pool_create(&rootpool, NULL);
@@ -255,8 +254,6 @@ main(int argc,
             jrs_log("starting job-runner server");
 
         jrs_server_run(serv);
-
-        jrs_server_destroy(serv);
 
         jrs_log("shutting down.");
 
