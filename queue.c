@@ -478,7 +478,7 @@ cluster_run(cluster_t *cluster, cluster_policy_func_t policy)
     fd_set rfds, efds, wfds;
     int maxfd, nsig;
 
-    while (1) {
+    while (!shutdown_signal) {
 
         /* for each node, check connection state. Build fd sets for select(). */
         FD_ZERO(&rfds);

@@ -43,14 +43,22 @@ jrs_client_init(jrs_client_t **outclient, apr_pool_t *rootpool,
     }
 
     /* create a socket */
-    sockfd = socket(addrinfo->ai_family, addrinfo->ai_socktype,
-            addrinfo->ai_protocol);
-    if (sockfd == -1) {
-        apr_pool_destroy(subpool);
-        return APR_FROM_OS_ERROR(errno);
+    int connected = 0;
+    for (; addrinfo; addrinfo = addrinfo->ai_next) {
+
+        sockfd = socket(addrinfo->ai_family, addrinfo->ai_socktype,
+                addrinfo->ai_protocol);
+
+        if (sockfd == -1)
+            continue;
+
+        if (connect(sockfd, addrinfo->ai_addr, addrinfo->ai_addrlen) == -1)
+            continue;
+
+        connected = 1;
     }
 
-    if (connect(sockfd, addrinfo->ai_addr, addrinfo->ai_addrlen) == -1) {
+    if (!connected) {
         apr_pool_destroy(subpool);
         close(sockfd);
         return APR_FROM_OS_ERROR(errno);
