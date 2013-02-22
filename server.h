@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "sockstream.h"
+#include "crypto.h"
 
 enum JRS_CONN_STATE {
     JRS_CONN_INIT, /* initially connected, not authenticated */
@@ -27,6 +28,8 @@ struct jrs_conn_t {
     jrs_sockstream_t *sockstream;
     int linebuf_size;
     uint8_t *linebuf;
+    crypto_state_t crypto;
+    char clientname[256];
 
     jrs_server_t *server;
     jrs_conn_t *next, *prev;
@@ -47,6 +50,7 @@ struct jrs_server_t {
     int port;
     int socket;
     int selfpipe[2];
+    char *secretfile;
 
     jrs_conn_t conns; /* sentinel */
     jrs_job_t jobs;   /* sentinel */
@@ -54,7 +58,8 @@ struct jrs_server_t {
     uint64_t jobid; /* monotonically increasing */
 };
 
-apr_status_t jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port);
+apr_status_t jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port,
+        char *secretfile);
 void jrs_server_run(jrs_server_t *server);
 void jrs_server_destroy(jrs_server_t *server);
 

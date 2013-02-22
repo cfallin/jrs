@@ -16,7 +16,8 @@
 #include <apr_errno.h>
 
 apr_status_t
-jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port)
+jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port,
+        char *secretfile)
 {
     apr_pool_t *subpool = NULL;
     jrs_server_t *ret = NULL;
@@ -67,6 +68,8 @@ jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port)
 
     fcntl(ret->selfpipe[0], F_SETFL, fcntl(ret->selfpipe[0], F_GETFL) | O_NONBLOCK);
     fcntl(ret->selfpipe[1], F_SETFL, fcntl(ret->selfpipe[0], F_GETFL) | O_NONBLOCK);
+
+    ret->secretfile = secretfile;
 
     *server = ret;
     return APR_SUCCESS;
@@ -126,6 +129,11 @@ handle_listen(jrs_server_t *server)
         return;
     }
 
+    snprintf(conn->clientname, sizeof(conn->clientname),
+            "%d.%d.%d.%d:%d",
+            ipaddr[0], ipaddr[1], ipaddr[2], ipaddr[3],
+            sin.sin_port);
+
     conn->linebuf_size = 4096;
     conn->linebuf = apr_pcalloc(subpool, conn->linebuf_size);
     if (!conn->linebuf) {
@@ -145,17 +153,38 @@ handle_listen(jrs_server_t *server)
         return;
     }
 
+    /* start crypto */
+    if (crypto_start(conn->sockstream, server->secretfile, &conn->crypto)) {
+        close(sockfd);
+        apr_pool_destroy(subpool);
+        return;
+    }
+
     DLIST_INSERT(DLIST_TAIL(&server->conns), conn);
 }
 
 static int
 handle_conn(jrs_server_t *server, jrs_conn_t *conn, int rflag, int eflag, int wflag)
 {
+    Crypto_State cryptostate;
+
     /* handle any pending I/O on the connection in a nonblocking way */
     if (jrs_sockstream_sendrecv(conn->sockstream, rflag))
         return 1;
     if (jrs_sockstream_closed(conn->sockstream))
         return 1;
+
+    /* are we still negotiating crypto? */
+    cryptostate = crypto_wait(conn->sockstream, &conn->crypto);
+    if (cryptostate == CRYPTO_BAD) {
+        jrs_log("bad crypto negotation with client '%s'.",
+                conn->clientname);
+        return 1; /* close connection */
+    }
+    if (cryptostate == CRYPTO_WAITING)
+        return 0; /* nothing more we can do yet */
+
+    assert(cryptostate == CRYPTO_ESTABLISHED);
 
     /* is there a line available? If not, we're done here. */
     if (!jrs_sockstream_hasline(conn->sockstream))
@@ -280,6 +309,7 @@ jrs_server_run(jrs_server_t *server)
                             FD_ISSET(conn->socket, &efds),
                             FD_ISSET(conn->socket, &wfds))) {
                     close(conn->socket);
+                    jrs_log("closing connection '%s'.", conn->clientname);
                     DLIST_REMOVE(conn);
                     apr_pool_destroy(conn->pool);
                 }

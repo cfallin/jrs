@@ -4,6 +4,27 @@
 #include <openssl/rand.h>
 #include <stdio.h>
 
+//#define DEBUG
+
+#ifdef DEBUG
+
+static void
+dump_bytes(uint8_t *bytes, int len)
+{
+    char buf[1024];
+    char *p = buf;
+    int remaining = sizeof(buf);
+    int i;
+    for (i = 0; i < len; i++) {
+        int l = snprintf(p, remaining, "%02x ", bytes[i]);
+        p += l;
+        remaining -= l;
+    }
+    jrs_log("%s", buf);
+}
+
+#endif
+
 /*
  * Protocol:
  *
@@ -23,8 +44,10 @@ crypto_start(jrs_sockstream_t *sockstream, char *secretfile, crypto_state_t *sta
 
     /* read the secret file and set up the state. */
     f = fopen(secretfile, "r");
-    if (!f)
+    if (!f) {
+        jrs_log("could not read secret file '%s'.", secretfile);
         return 1;
+    }
 
     memset(state->secret, 0, sizeof(state->secret));
     state->secretlen = fread(state->secret, 1, sizeof(state->secret), f);
@@ -36,6 +59,11 @@ crypto_start(jrs_sockstream_t *sockstream, char *secretfile, crypto_state_t *sta
     /* get a random nonce. */
     if (!RAND_bytes(state->nonce, NONCELEN))
         return 1;
+
+#ifdef DEBUG
+    jrs_log("sending nonce:");
+    dump_bytes(state->nonce, NONCELEN);
+#endif
 
     /* send the nonce to the other end. */
     jrs_sockstream_write(sockstream, state->nonce, NONCELEN);
@@ -66,6 +94,11 @@ crypto_wait(jrs_sockstream_t *sockstream, crypto_state_t *state)
 
             /* do we have the full nonce now? */
             if (state->othernonce_bytes == NONCELEN) {
+
+#ifdef DEBUG
+                jrs_log("got other's nonce:");
+                dump_bytes(state->othernonce, NONCELEN);
+#endif
                 
                 char sha1[20], sha1_rc4[20];
 
@@ -77,6 +110,11 @@ crypto_wait(jrs_sockstream_t *sockstream, crypto_state_t *state)
 
                 RC4_set_key(&rc4, state->secretlen, state->secret);
                 RC4(&rc4, sizeof(sha1), sha1, sha1_rc4);
+
+#ifdef DEBUG
+                jrs_log("RC4(secret, SHA1(other's nonce, secret)) =");
+                dump_bytes(sha1_rc4, 20);
+#endif
 
                 /* send the reply */
                 jrs_sockstream_write(sockstream, sha1_rc4, sizeof(sha1_rc4));
@@ -100,6 +138,11 @@ crypto_wait(jrs_sockstream_t *sockstream, crypto_state_t *state)
             /* do we have the full reply now? */
             if (state->reply_bytes == 20) {
 
+#ifdef DEBUG
+                jrs_log("got reply:");
+                dump_bytes(state->reply, 20);
+#endif
+
                 char sha1[20], sha1_rc4[20];
 
                 /* compute the expected reply: RC4(secret, SHA1(our nonce,
@@ -113,9 +156,17 @@ crypto_wait(jrs_sockstream_t *sockstream, crypto_state_t *state)
                 RC4_set_key(&rc4, state->secretlen, state->secret);
                 RC4(&rc4, sizeof(sha1), sha1, sha1_rc4);
 
+#ifdef DEBUG
+                jrs_log("expected reply:");
+                dump_bytes(sha1_rc4, 20);
+#endif
+
                 /* compare expected reply with actual reply */
                 if (memcmp(sha1_rc4, state->reply, 20)) {
                     state->state = CRYPTO_STATE_BAD;
+#ifdef DEBUG
+                    jrs_log("bad reply");
+#endif
                     return CRYPTO_BAD;
                 }
                 else {
@@ -143,6 +194,9 @@ crypto_wait(jrs_sockstream_t *sockstream, crypto_state_t *state)
 
                     jrs_sockstream_set_rc4(sockstream, &sendkey, &recvkey);
 
+#ifdef DEBUG
+                    jrs_log("crypto link established");
+#endif
                     state->state = CRYPTO_STATE_ESTABLISHED;
                     return CRYPTO_ESTABLISHED;
                 }

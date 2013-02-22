@@ -226,7 +226,7 @@ jrs_sockstream_sendrecv(jrs_sockstream_t *sockstream, int rflag)
     /* is there anything to receive? */
     while (1) {
         ssize_t readbytes;
-        uint8_t buf[1024], buf2[1024];
+        uint8_t buf[1024], buf2[1024], *b;
         int i;
 
         readbytes = recv(sockstream->sockfd, &buf, sizeof(buf), MSG_DONTWAIT);
@@ -234,9 +234,11 @@ jrs_sockstream_sendrecv(jrs_sockstream_t *sockstream, int rflag)
             if (sockstream->crypto) {
                 RC4(&sockstream->readkey, readbytes, buf, buf2);
                 jrs_fifo_write(sockstream->readfifo, buf2, readbytes);
+                b = buf2;
             }
             else {
                 jrs_fifo_write(sockstream->readfifo, buf, readbytes);
+                b = buf;
             }
         }
 
@@ -244,7 +246,7 @@ jrs_sockstream_sendrecv(jrs_sockstream_t *sockstream, int rflag)
             sockstream->err = 1;
 
         for (i = 0; i < readbytes; i++)
-            if (buf[i] == '\n')
+            if (b[i] == '\n')
                 sockstream->read_lines++;
 
         if (readbytes <= 0) {
@@ -283,11 +285,12 @@ jrs_sockstream_read(jrs_sockstream_t *sockstream, uint8_t *buf, int size)
         if (availlen == 0)
             break;
 
-        if (availlen < (size - readbytes))
+        if (availlen > (size - readbytes))
             availlen = (size - readbytes);
 
         memcpy(buf + readbytes, fifobuf, availlen);
         readbytes += availlen;
+        jrs_fifo_advance(sockstream->readfifo, availlen);
     }
 
     return readbytes;
