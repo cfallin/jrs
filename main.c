@@ -112,10 +112,14 @@ main(int argc,
 
             case 'p': /* pid file */
                 {
-                    char cwdbuf[1024];
-                    snprintf(pidfilename, sizeof(pidfilename),
-                            "%s/%s", getcwd(cwdbuf, sizeof(cwdbuf)),
-                            option_arg);
+                    if (option_arg[0] != '/') {
+                        char cwdbuf[1024];
+                        snprintf(pidfilename, sizeof(pidfilename),
+                                "%s/%s", getcwd(cwdbuf, sizeof(cwdbuf)),
+                                option_arg);
+                    }
+                    else
+                        strncpy(pidfilename, option_arg, sizeof(pidfilename));
                 }
                 break;
 
@@ -137,11 +141,16 @@ main(int argc,
 
             case 's':
                 {
-                    option_secretfile = malloc(1024);
-                    char cwdbuf[1024];
-                    snprintf(option_secretfile, 1024,
-                            "%s/%s", getcwd(cwdbuf, sizeof(cwdbuf)),
-                            option_arg);
+                    if (option_arg[0] != '/') {
+                        option_secretfile = malloc(1024);
+                        char cwdbuf[1024];
+                        snprintf(option_secretfile, 1024,
+                                "%s/%s", getcwd(cwdbuf, sizeof(cwdbuf)),
+                                option_arg);
+                    }
+                    else
+                        strncpy(option_secretfile, option_arg,
+                                sizeof(option_secretfile));
                 }
                 break;
         }
