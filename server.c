@@ -18,7 +18,7 @@
 
 apr_status_t
 jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port,
-        char *secretfile)
+        char *secretfile, ServerMode mode)
 {
     apr_pool_t *subpool = NULL;
     jrs_server_t *ret = NULL;
@@ -39,6 +39,17 @@ jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port,
     ret->port = port;
     DLIST_INIT(&ret->conns);
     DLIST_INIT(&ret->jobs);
+
+    if (mode == SERVERMODE_MGR) {
+        ret->mgr.userhash = apr_hash_make(subpool);
+        ret->mgr.nodehash = apr_hash_make(subpool);
+        rv = APR_ENOMEM;
+        if (!ret->mgr.userhash || !ret->mgr.userhash)
+            goto out;
+
+        DLIST_INIT(&ret->mgr.users);
+        DLIST_INIT(&ret->mgr.nodes);
+    }
 
     /* open the socket and bind to the port now so that we can bail if we don't
      * get the port */
@@ -79,6 +90,8 @@ jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port,
     else {
         ret->jobid = rand();
     }
+
+    ret->mode = mode;
 
     *server = ret;
     return APR_SUCCESS;
@@ -176,6 +189,8 @@ static int
 handle_conn(jrs_server_t *server, jrs_conn_t *conn, int rflag, int eflag, int wflag)
 {
     Crypto_State cryptostate;
+    int size;
+    unsigned char *p;
 
     /* handle any pending I/O on the connection in a nonblocking way */
     if (jrs_sockstream_sendrecv(conn->sockstream, rflag))
@@ -195,15 +210,29 @@ handle_conn(jrs_server_t *server, jrs_conn_t *conn, int rflag, int eflag, int wf
 
     assert(cryptostate == CRYPTO_ESTABLISHED);
 
+    if (!conn->inited) {
+        if (conn_cmd_open(conn))
+            return 1; /* close connection */
+        conn->inited = 1;
+    }
+
     /* is there a line available? If not, we're done here. */
     if (!jrs_sockstream_hasline(conn->sockstream))
         return 0;
 
     /* OK, grab the line and run the command. */
-    int size = conn->linebuf_size - 1;
+    size = conn->linebuf_size - 1;
     if (jrs_sockstream_readline(conn->sockstream, conn->linebuf, &size))
         return 1; /* on error, close connection */
     conn->linebuf[size] = 0;
+
+    /* chop off newline */
+    p = conn->linebuf + size - 1;
+    while (p >= conn->linebuf && (*p == '\r' || *p == '\n')) {
+        *p-- = 0;
+        size--;
+    }
+
     /* on empty line, close connection. */
     if (size < 1) return 1;
 
@@ -318,6 +347,7 @@ jrs_server_run(jrs_server_t *server)
                             FD_ISSET(conn->socket, &efds),
                             FD_ISSET(conn->socket, &wfds))) {
                     close(conn->socket);
+                    conn_cmd_close(conn);
                     jrs_log("closing connection '%s'.", conn->clientname);
                     DLIST_REMOVE(conn);
                     apr_pool_destroy(conn->pool);

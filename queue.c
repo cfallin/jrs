@@ -553,3 +553,9 @@ cluster_run(cluster_t *cluster, cluster_policy_func_t policy)
         policy(cluster, &ops);
     }
 }
+
+int
+cluster_populatejobs(cluster_t *cluster, char *jobfile)
+{
+    return 0;
+}

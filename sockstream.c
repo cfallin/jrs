@@ -325,7 +325,7 @@ jrs_sockstream_readline(jrs_sockstream_t *sockstream, uint8_t *buf, int *size)
             break;
     }
 
-    *size == readbytes;
+    *size = readbytes;
     return 0;
 }
 

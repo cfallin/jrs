@@ -42,11 +42,12 @@ usage()
     fprintf(stderr, "\n"
             "Usage: jrs [options]\n"
             "    -d             : daemon mode\n"
-            "    -q             : queue-manager mode\n"
+            "    -q             : queue-sender mode\n"
+            "    -n             : metadata manager mode\n"
             "    -c             : raw client mode\n"
             "    -s secretfile  : use the given shared-secret file\n"
             "\n"
-            " in daemon mode:\n"
+            " in daemon and metadata manager mode:\n"
             "    -f             : run in foreground\n"
             "    -l port        : listen on specified port\n"
             "    -p pidfile     : write server pid to pidfile\n"
@@ -55,9 +56,10 @@ usage()
             "    -r remote-host : connect to remote host\n"
             "    -l port        : connect to the given port on the remote host\n"
             "\n"
-            "  in queue-manager mode:\n"
-            "    -x policy.lua  : execute the given queue-manager policy\n"
+            "  in queue-sender mode:\n"
+            "    -x jobs.list   : execute the given list of jobs\n"
             "    -e nodes.list  : use the given list of nodes, one per line\n"
+            "    -m manager     : use the given metadata manager\n"
             "\n"
             "In all cases, a secret file and a port must be specified. In client\n"
             "mode, a remote host must also be specified.\n"
@@ -113,10 +115,12 @@ main(int argc,
     int option_daemonmode = 0;
     int option_clientmode = 0;
     int option_queuemode = 0;
+    int option_mgrmode = 0;
     char *option_secretfile = NULL;
+    char *option_mgr = NULL;
     char *option_remotehost = NULL;
     char *option_nodelist = NULL;
-    char *option_policy = NULL;
+    char *option_joblist = NULL;
 
     jrs_server_t *serv;
     jrs_client_t *client;
@@ -142,7 +146,7 @@ main(int argc,
         return 1;
     }
 
-    while ((rv = apr_getopt(opt, "dcs:l:p:fr:qx:e:", &option_ch, &option_arg)) ==
+    while ((rv = apr_getopt(opt, "dcnqs:l:p:fr:x:e:", &option_ch, &option_arg)) ==
             APR_SUCCESS) {
         switch (option_ch) {
             case 'l': /* listen port */
@@ -169,9 +173,16 @@ main(int argc,
                 option_queuemode = 1;
                 break;
 
+            case 'n':
+                option_mgrmode = 1;
+                break;
+
+            case 'm':
+                option_mgr = strdup(option_arg);
+
             case 'x':
-                option_policy = NULL;
-                handle_filepath(option_arg, &option_policy, 0);
+                option_joblist = NULL;
+                handle_filepath(option_arg, &option_joblist, 0);
                 break;
 
             case 'e':
@@ -192,16 +203,17 @@ main(int argc,
     }
 
     /* Validate args */
-    if ((!option_clientmode && !option_daemonmode && !option_queuemode) ||
+    if ((!option_clientmode && !option_daemonmode && !option_queuemode &&
+                !option_mgrmode) ||
             (option_clientmode && (!option_remotehost || !option_port)) ||
             (option_daemonmode && (!option_port)) ||
-            (option_queuemode  && (!option_policy || !option_nodelist)) ||
+            (option_queuemode  && (!option_joblist || !option_nodelist || !option_mgr)) ||
             (!option_secretfile)) {
         usage();
         return 1;
     }
 
-    if (option_daemonmode) {
+    if (option_daemonmode || option_mgrmode) {
 
         /* Daemonize */
         if (!option_foreground) {
@@ -223,7 +235,8 @@ main(int argc,
         }
 
         /* Init the server (this opens and binds the listener) */
-        rv = jrs_server_init(&serv, rootpool, option_port, option_secretfile);
+        rv = jrs_server_init(&serv, rootpool, option_port, option_secretfile,
+                option_mgrmode ? SERVERMODE_MGR : SERVERMODE_JOBS);
         if (rv != APR_SUCCESS) {
             apr_perror(rv, "Error initializing server (binding to socket)");
             return 1;
@@ -234,7 +247,10 @@ main(int argc,
         apr_signal(SIGSTOP, handle_shutdown_signal);
         apr_signal(SIGINT,  handle_shutdown_signal);
 
-        jrs_log("starting server");
+        if (option_mgrmode)
+            jrs_log("starting metadata manager server");
+        else
+            jrs_log("starting job-runner server");
 
         jrs_server_run(serv);
 
@@ -290,6 +306,8 @@ main(int argc,
         fclose(f);
         *nodelistp = NULL;
 
+        config.mgrnode = option_mgr;
+
         /* instantiate the cluster structures */
         rv = cluster_create(&cluster, &config, rootpool);
 
@@ -305,8 +323,10 @@ main(int argc,
 
         jrs_log("starting queue manager");
 
-        /* run the basic policy */
-        /* TODO: Lua integration */
+        /* populate the jobs */
+        cluster_populatejobs(cluster, option_joblist);
+
+        /* run the policy */
         cluster_run(cluster, cluster_basic_policy);
 
         jrs_log("shutting down");

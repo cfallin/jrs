@@ -1,6 +1,7 @@
 #include <apr_general.h>
 #include <apr_pools.h>
 #include <apr_errno.h>
+#include <apr_strings.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -9,6 +10,8 @@
 #include "util.h"
 #include "sockstream.h"
 #include "server.h"
+
+/* ===================== JRS SERVER ====================== */
 
 static int
 conn_cmd_new(jrs_conn_t *conn, char *args, int len)
@@ -208,25 +211,264 @@ conn_cmd_stats(jrs_conn_t *conn)
     return 0;
 }
 
+/* ===================== MGR SERVER ====================== */
+
+static uint64_t
+time_usec()
+{
+    struct timeval tv;
+    if (gettimeofday(&tv, NULL))
+        return 0;
+    return (tv.tv_sec * 1000000) + tv.tv_usec;
+}
+
+static void
+age_out_nodes(jrs_server_t *server)
+{
+    jrs_metadata_node_t *node, *nnode;
+
+    uint64_t now = time_usec();
+
+    for (node = DLIST_HEAD(&server->mgr.nodes);
+            node != DLIST_END(&server->mgr.nodes);
+            node = nnode) {
+        nnode = DLIST_NEXT(node);
+
+        if ((now - node->lastseen) > 20*1000000) {
+            DLIST_REMOVE(node);
+            server->mgr.corecount -= node->cores;
+            jrs_log("aging out old node '%s'.", node->hostname);
+            apr_pool_destroy(node->pool);
+        }
+    }
+}
+
+static void
+assign_cores(jrs_server_t *server)
+{
+    int cores_per_user;
+    int alloced_cores;
+    int remainder;
+    jrs_metadata_user_t *user;
+
+    if (server->mgr.usercount == 0)
+        return;
+
+    age_out_nodes(server);
+
+    /* cores are divided evenly per user. */
+    cores_per_user = server->mgr.corecount / server->mgr.usercount;
+    /* a few users get lucky with the remainder cores */
+    remainder = server->mgr.corecount % server->mgr.usercount;
+
+    DLIST_FOREACH(&server->mgr.users, user) {
+        user->cores = cores_per_user;
+        if (remainder > 0) {
+            user->cores++;
+            remainder--;
+        }
+    }
+}
+
+static int
+conn_cmd_ident(jrs_conn_t *conn, char *args, int len)
+{
+    apr_status_t rv;
+    apr_pool_t *pool = NULL;
+    jrs_metadata_user_t *user;
+
+    /* does the username already exist in the userhash? */
+    user = apr_hash_get(conn->server->mgr.userhash, args, len);
+    if (!user) {
+        /* create a new node. */
+        rv = apr_pool_create(&pool, conn->server->pool);
+        if (rv != APR_SUCCESS)
+            goto out;
+
+        rv = APR_ENOMEM;
+        user = apr_pcalloc(pool, sizeof(jrs_metadata_user_t));
+        if (!user)
+            goto out;
+
+        user->pool = pool;
+        user->username = apr_pstrdup(pool, args);
+        user->conns = 0;
+        user->needed = 0;
+        user->cores = 0;
+
+        apr_hash_set(conn->server->mgr.userhash, args, len, user);
+        DLIST_INSERT(DLIST_HEAD(&conn->server->mgr.users), user);
+        conn->server->mgr.usercount++;
+    }
+
+    /* bump the connection count. */
+    user->conns++;
+
+    jrs_log("ident from user: '%s' (%d connections)", args, user->conns);
+
+    conn->usermeta = user;
+
+    /* acknowledge */
+    jrs_sockstream_write(conn->sockstream, "\r\n", 2);
+
+    return 0;
+
+out:
+    if (pool)
+        apr_pool_destroy(pool);
+    return 1;
+}
+
+static int
+conn_cmd_nodelist(jrs_conn_t *conn, char *args, int len)
+{
+    uint64_t now = time_usec();
+
+    /* tokenize the node list and insert/update timestamps/core counts */
+    char *tok, *saveptr;
+    char *prevtok = NULL;
+    for (tok = strtok_r(args, " \r\n", &saveptr);
+            tok; tok = strtok_r(NULL, " \r\n", &saveptr)) {
+
+        /* take tokens in pairs */
+        if (!prevtok) {
+            prevtok = tok;
+            continue;
+        }
+        else {
+            jrs_metadata_node_t *node;
+            apr_pool_t *pool;
+            apr_status_t rv;
+
+            char *hostname = prevtok, *cores_str = tok;
+            int cores = atoi(cores_str);
+            prevtok = NULL;
+
+            /* does an entry already exist? */
+            node = apr_hash_get(conn->server->mgr.nodehash, hostname, strlen(hostname));
+            if (!node) {
+                rv = apr_pool_create(&pool, conn->server->pool);
+                if (rv != APR_SUCCESS)
+                    continue;
+
+                node = apr_pcalloc(pool, sizeof(jrs_metadata_node_t));
+                if (!node) {
+                    apr_pool_destroy(pool);
+                    continue;
+                }
+
+                node->pool = pool;
+                node->hostname = apr_pstrdup(pool, hostname);
+                apr_hash_set(conn->server->mgr.nodehash, hostname,
+                        strlen(hostname), node);
+                DLIST_INSERT(DLIST_HEAD(&conn->server->mgr.nodes), node);
+                jrs_log("new node: '%s'", hostname);
+            }
+            
+            /* update total core count */
+            conn->server->mgr.corecount += (cores - node->cores);
+
+            /* update last-seen timestamp and number of cores */
+            node->lastseen = now;
+            node->cores = cores;
+        }
+    }
+
+    /* ack */
+    jrs_sockstream_write(conn->sockstream, "\r\n", 2);
+
+    return 0;
+}
+
+static int
+conn_cmd_requestcores(jrs_conn_t *conn, char *args, int len)
+{
+    jrs_metadata_node_t *node;
+    jrs_metadata_user_t *user;
+    int users, nodes;
+    char buf[64];
+
+    /* must ident first */
+    if (!conn->usermeta)
+        return 1;
+
+    /* update the requested core count */
+    conn->usermeta->needed = atoi(args);
+
+    /* recompute assignments */
+    assign_cores(conn->server);
+    
+    /* response: allocated core count (for this connection) */
+    snprintf(buf, sizeof(buf), "%d\r\n", conn->usermeta->cores / conn->usermeta->conns);
+    jrs_sockstream_write(conn->sockstream, buf, strlen(buf));
+
+    return 0;
+}
+
+/* ===================== COMMON STUFF ====================== */
+
+int
+conn_cmd_open(jrs_conn_t *conn)
+{
+    conn->usermeta = NULL;
+    return 0;
+}
+
+void
+conn_cmd_close(jrs_conn_t *conn)
+{
+    /* dec connection count and remove user if it reaches 0 */
+    if (conn->usermeta) {
+        conn->usermeta->conns--;
+        if (conn->usermeta->conns <= 0) {
+            DLIST_REMOVE(conn->usermeta);
+            /* remove from hash */
+            apr_hash_set(conn->server->mgr.userhash,
+                    conn->usermeta->username,
+                    strlen(conn->usermeta->username), NULL);
+            conn->server->mgr.usercount--;
+            jrs_log("disconnect from user '%s'.", conn->usermeta->username);
+            apr_pool_destroy(conn->usermeta->pool);
+        }
+        conn->usermeta = NULL;
+    }
+}
+
 int
 conn_cmd(jrs_conn_t *conn, char *buf, int len)
 {
+    if (conn->server->mode == SERVERMODE_JOBS) {
+        /* command (opcode) is first character/byte of line */
+        switch (conn->linebuf[0]) {
+            case 'N': /* new job */
+                if (len < 2) return 1;
+                return conn_cmd_new(conn, conn->linebuf + 2, len - 2);
 
-    /* command (opcode) is first character/byte of line */
-    switch (conn->linebuf[0]) {
-        case 'N': /* new job */
-            if (len < 2) return 1;
-            return conn_cmd_new(conn, conn->linebuf + 2, len - 2);
+            case 'K': /* kill a job */
+                if (len < 2) return 1;
+                return conn_cmd_kill(conn, conn->linebuf + 2, len - 2);
 
-        case 'K': /* kill a job */
-            if (len < 2) return 1;
-            return conn_cmd_kill(conn, conn->linebuf + 2, len - 2);
+            case 'L': /* list jobs */
+                return conn_cmd_list(conn);
 
-        case 'L': /* list jobs */
-            return conn_cmd_list(conn);
+            case 'S': /* report system stats */
+                return conn_cmd_stats(conn);
+        }
+    }
+    else if (conn->server->mode == SERVERMODE_MGR) {
+        switch (conn->linebuf[0]) {
+            case 'I': /* identify */
+                if (len < 2) return 1;
+                return conn_cmd_ident(conn, conn->linebuf + 2, len - 2);
 
-        case 'S': /* report system stats */
-            return conn_cmd_stats(conn);
+            case 'N': /* node-list */
+                if (len < 2) return 1;
+                return conn_cmd_nodelist(conn, conn->linebuf + 2, len - 2);
+
+            case 'R': /* request cores */
+                if (len < 2) return 1;
+                return conn_cmd_requestcores(conn, conn->linebuf + 2, len - 2);
+        }
     }
 
     /* unknown command */

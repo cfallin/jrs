@@ -96,6 +96,9 @@ struct cluster_t {
     job_t jobs; /* all jobs not sent or running to a given node */
     node_t nodes;
 
+    jrs_sockstream_t *mgrsockstream;
+    crypto_state_t mgrcrypto;
+
     config_t *config;
 };
 
@@ -103,6 +106,7 @@ struct config_t {
     char **nodes; /* null-terminated list of char* */
     char *secretfile;
     int port;
+    char *mgrnode;
 };
 
 typedef struct {
@@ -122,6 +126,8 @@ void node_destroy(node_t *node);
 
 apr_status_t cluster_create(cluster_t **outcluster, config_t *config, apr_pool_t *pool);
 void cluster_destroy(cluster_t *cluster);
+
+int cluster_populatejobs(cluster_t *cluster, char *jobfile);
 
 typedef void (*cluster_policy_func_t)(cluster_t *cluster, cluster_ops_t *ops);
 
