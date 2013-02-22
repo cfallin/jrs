@@ -71,6 +71,10 @@ struct node_t {
     char *hostname;
     crypto_state_t crypto;
 
+    /* is this a mgr node? */
+    int mgr;
+    int idented;
+
     int cores;
     int sent; /* cores which are committed to sent jobs */
     double loadavg;
@@ -96,8 +100,10 @@ struct cluster_t {
     job_t jobs; /* all jobs not sent or running to a given node */
     node_t nodes;
 
-    jrs_sockstream_t *mgrsockstream;
-    crypto_state_t mgrcrypto;
+    node_t *mgrnode;
+
+    int alloced_cores;
+    int req_cores;
 
     config_t *config;
 };

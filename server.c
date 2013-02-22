@@ -156,7 +156,7 @@ handle_listen(jrs_server_t *server)
             ipaddr[0], ipaddr[1], ipaddr[2], ipaddr[3],
             sin.sin_port);
 
-    conn->linebuf_size = 4096;
+    conn->linebuf_size = 65536;
     conn->linebuf = apr_pcalloc(subpool, conn->linebuf_size);
     if (!conn->linebuf) {
         close(sockfd);
