@@ -52,6 +52,7 @@ jrs_client_init(jrs_client_t **outclient, apr_pool_t *rootpool,
 
     if (connect(sockfd, addrinfo->ai_addr, addrinfo->ai_addrlen) == -1) {
         apr_pool_destroy(subpool);
+        close(sockfd);
         return APR_FROM_OS_ERROR(errno);
     }
 

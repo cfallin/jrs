@@ -12,6 +12,8 @@ struct job_t;
 typedef struct job_t job_t;
 struct node_t;
 typedef struct node_t node_t;
+struct req_t;
+typedef struct req_t req_t;
 struct cluster_t;
 typedef struct cluster_t cluster_t;
 struct config_t;
@@ -35,6 +37,9 @@ struct job_t {
      * immediately. */
     int killed; 
 
+    /* used when job-list is received from each node */
+    int mark;
+
     char *cmdline, *cwd;
 
     cluster_t *cluster;
@@ -42,9 +47,21 @@ struct job_t {
     job_t *next, *prev;
 };
 
+struct req_t {
+    apr_pool_t *pool;
+
+    uint8_t *req;
+    int len;
+
+    char type;
+    job_t *job; /* associated job (for newjob reqs) */
+
+    node_t *node;
+    req_t *next, *prev;
+};
+
 typedef enum NodeState {
     NODESTATE_INIT,
-    NODESTATE_CONNECTING,
     NODESTATE_CONNECTED,
 } NodeState;
 
@@ -52,17 +69,24 @@ struct node_t {
     apr_pool_t *pool;
     jrs_sockstream_t *sockstream;
     char *hostname;
+    crypto_state_t crypto;
 
     int cores;
     int sent; /* cores which are committed to sent jobs */
     double loadavg;
+    int mem;
 
     NodeState state;
+
+    uint8_t *linebuf;
+    int linebuf_size;
+
+    req_t *curreq;
+    req_t reqs;
 
     cluster_t *cluster;
 
     job_t jobs;      /* jobs which are confirmed-running */
-    job_t sent_jobs; /* jobs which have been sent */
     node_t *next, *prev;
 };
 
@@ -82,6 +106,8 @@ struct config_t {
 };
 
 typedef struct {
+    /* request an update from the given node */
+    void (*updatenode)(node_t *node);
     /* create a new job and add it to the global cluster queue */
     job_t *(*createjob)(cluster_t *cluster, char *cwd, char *cmdline);
     /* send a job from the main cluster queue to a node's sent-queue */
