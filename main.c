@@ -213,6 +213,10 @@ main(int argc,
         /* Init the client */
         rv = jrs_client_init(&client, rootpool, option_remotehost, option_port,
                 option_secretfile);
+        if (rv != APR_SUCCESS) {
+            jrs_log("Error initializing client.");
+            return 1;
+        }
 
         /* Run the main loop (echo stdin/stdout <-> encrypted connection) */
         jrs_client_run(client);

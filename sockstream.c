@@ -214,11 +214,6 @@ jrs_sockstream_sendrecv(jrs_sockstream_t *sockstream, int rflag)
                 jrs_fifo_advance(sockstream->writefifo, written);
         }
 
-        if (written < 0 &&
-                (errno == ECONNREFUSED ||
-                 errno == ENOTCONN))
-            sockstream->err = 1;
-
         if (written <= 0)
             break;
     }
@@ -242,16 +237,18 @@ jrs_sockstream_sendrecv(jrs_sockstream_t *sockstream, int rflag)
             }
         }
 
-        if (readbytes == 0 && rflag) /* EOF */
+        if (readbytes == 0 && rflag) { /* EOF */
             sockstream->err = 1;
+        }
 
         for (i = 0; i < readbytes; i++)
             if (b[i] == '\n')
                 sockstream->read_lines++;
 
         if (readbytes <= 0) {
-            if (errno == ECONNREFUSED || errno == ENOTCONN)
+            if (errno == ECONNREFUSED) {
                 sockstream->err = 1;
+            }
             break;
         }
     }
@@ -280,6 +277,7 @@ jrs_sockstream_read(jrs_sockstream_t *sockstream, uint8_t *buf, int size)
 
     while (readbytes < size) {
         uint8_t *fifobuf;
+        int i;
         int availlen = jrs_fifo_peek_nocopy(sockstream->readfifo, &fifobuf, size);
 
         if (availlen == 0)
@@ -290,6 +288,10 @@ jrs_sockstream_read(jrs_sockstream_t *sockstream, uint8_t *buf, int size)
 
         memcpy(buf + readbytes, fifobuf, availlen);
         readbytes += availlen;
+        for (i = 0; i < availlen; i++) {
+            if (fifobuf[i] == '\n')
+                sockstream->read_lines--;
+        }
         jrs_fifo_advance(sockstream->readfifo, availlen);
     }
 
