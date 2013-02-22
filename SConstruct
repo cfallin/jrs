@@ -1,6 +1,6 @@
 import os
 
-ccflags = '-g'
+ccflags = '-O3 -g'
 
 env = Environment(ENV=os.environ,CPPPATH='.',CCFLAGS=ccflags)
 env.ParseConfig('apr-config --cflags --includes --libs --link-ld')

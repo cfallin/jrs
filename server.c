@@ -1,11 +1,13 @@
 #include "server.h"
 #include "util.h"
 #include "sockstream.h"
+#include "conn.h"
 
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <netinet/in.h>
+#include <fcntl.h>
 #include <assert.h>
 
 #include <apr_signal.h>
@@ -43,6 +45,9 @@ jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port)
         goto out;
     }
 
+    /* set close-on-exec and nonblocking */
+    fcntl(ret->socket, F_SETFD, fcntl(ret->socket, F_GETFD) | FD_CLOEXEC);
+
     memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
     sin.sin_port = htons(port);
@@ -56,6 +61,17 @@ jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port)
         rv = APR_FROM_OS_ERROR(errno);
         goto out;
     }
+
+    fcntl(ret->socket, F_SETFD, fcntl(ret->socket, F_GETFD) | O_NONBLOCK);
+
+    /* set up a self-pipe to handle sigchld notifications */
+    if (pipe(ret->selfpipe)) {
+        rv = APR_FROM_OS_ERROR(errno);
+        goto out;
+    }
+
+    fcntl(ret->selfpipe[0], F_SETFL, fcntl(ret->selfpipe[0], F_GETFL) | O_NONBLOCK);
+    fcntl(ret->selfpipe[1], F_SETFL, fcntl(ret->selfpipe[0], F_GETFL) | O_NONBLOCK);
 
     *server = ret;
     return APR_SUCCESS;
@@ -74,8 +90,10 @@ static jrs_server_t *active_server = NULL;
 static void
 jrs_server_sigchld(int sig)
 {
-    if (active_server)
-        active_server->sigchld_flag = 1;
+    if (active_server) {
+        char buf[1] = {0, };
+        ssize_t written = write(active_server->selfpipe[1], buf, 1);
+    }
 }
 
 static void
@@ -92,8 +110,12 @@ handle_listen(jrs_server_t *server)
     if (sockfd == -1)
         return;
 
+    /* set close-on-exec */
+    fcntl(sockfd, F_SETFD, fcntl(sockfd, F_GETFD) | FD_CLOEXEC);
+
     unsigned char *ipaddr = (unsigned char *)&sin.sin_addr.s_addr;
-    jrs_log("connection from %d.%d.%d.%d:%d", ipaddr[0], ipaddr[1], ipaddr[2], ipaddr[3],
+    jrs_log("connection from %d.%d.%d.%d:%d",
+            ipaddr[0], ipaddr[1], ipaddr[2], ipaddr[3],
             sin.sin_port);
 
     rv = apr_pool_create(&subpool, server->pool);
@@ -144,33 +166,50 @@ handle_conn(jrs_server_t *server, jrs_conn_t *conn, int rflag, int eflag, int wf
     if (!jrs_sockstream_hasline(conn->sockstream))
         return 0;
 
-    /* OK, grab the line and parse it. */
-    int size = conn->linebuf_size;
+    /* OK, grab the line and run the command. */
+    int size = conn->linebuf_size - 1;
     if (jrs_sockstream_readline(conn->sockstream, conn->linebuf, &size))
         return 1; /* on error, close connection */
-
-    /* command (opcode) is first character/byte of line */
+    conn->linebuf[size] = 0;
+    /* on empty line, close connection. */
     if (size < 1) return 1;
-    switch (conn->linebuf[0]) {
-        case 'N': /* new job */
-            {
-                /* first arg: CWD; second arg: command line. Returns ID. */
-                jrs_log("new job: %s", conn->linebuf);
-                jrs_sockstream_write(conn->sockstream, "new job!\n", 9);
-            }
-            break;
 
-        case 'L': /* list jobs */
-            {
-                /* return list of running job IDs, space-separated. */
-                jrs_log("list jobs");
-                jrs_sockstream_write(conn->sockstream, "list jobs!\n", 10);
-            }
-            break;
-    }
+    if (conn_cmd(conn, conn->linebuf, size))
+        return 1;
 
     jrs_sockstream_sendrecv(conn->sockstream, 0);
     return 0;
+}
+
+static void
+handle_sigchld(jrs_server_t *server)
+{
+    /* Handle any completed jobs. One or more SIGCHLD signals may have
+     * arrived during the poll (and/or may have woken up the poll). */
+    while (1) {
+        pid_t pid;
+        int status;
+        char buf[1];
+        ssize_t len;
+
+        len = read(server->selfpipe[0], buf, 1);
+        if (len <= 0) break;
+
+        while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+            jrs_job_t *job = NULL;
+
+            /* a child exited. Find the matching job. */
+            DLIST_FOREACH(&server->jobs, job) {
+                if (job->pid == pid) {
+                    jrs_log("job pid %d is done", job->pid);
+                    DLIST_REMOVE(job);
+                    /* this frees *job as well */
+                    apr_pool_destroy(job->pool);
+                    break;
+                }
+            }
+        }
+    }
 }
 
 void
@@ -192,8 +231,7 @@ jrs_server_run(jrs_server_t *server)
         int nsig = 0;
         int maxfd = 0;
 
-        /* select-poll on listen socket, connection sockets, and signals
-         * (SIGCHLD for job completion) */
+        handle_sigchld(server);
 
         /* initialize the set of fds on which we select() */
         FD_ZERO(&rfds);
@@ -201,45 +239,28 @@ jrs_server_run(jrs_server_t *server)
         FD_ZERO(&wfds);
         FD_SET(server->socket, &rfds);
         FD_SET(server->socket, &efds);
-        jrs_log("waiting on listen socket fd %d", server->socket);
+        FD_SET(server->selfpipe[0], &rfds);
         maxfd = server->socket + 1;
+        if (server->selfpipe[0] >= maxfd)
+            maxfd = server->selfpipe[0] + 1;
         DLIST_FOREACH(&server->conns, conn) {
             FD_SET(conn->socket, &rfds);
             FD_SET(conn->socket, &efds);
             if (!jrs_sockstream_flushed(conn->sockstream))
                     FD_SET(conn->socket, &wfds);
-            jrs_log("waiting on connection socket fd %d", conn->socket);
             if (conn->socket >= maxfd)
                 maxfd = conn->socket + 1;
         }
         
-        jrs_log("select");
         nsig = select(maxfd, &rfds, &wfds, &efds, NULL);
-        jrs_log("select woke up");
+
+        handle_sigchld(server);
 
         if (shutdown_signal)
             break;
 
-        /* Handle any completed jobs. One or more SIGCHLD signals may have
-         * arrived during the poll (and/or may have woken up the poll). */
-        if (server->sigchld_flag) {
-            pid_t pid;
-            int status;
-
-            while ((pid = waitpid(-1, &status, WNOHANG)) != 0) {
-                job = NULL;
-
-                /* a child exited. Find the matching job. */
-                DLIST_FOREACH(&server->jobs, job) {
-                    if (job->pid == pid) {
-                        DLIST_REMOVE(job);
-                        /* this frees *job as well */
-                        apr_pool_destroy(job->pool);
-                        break;
-                    }
-                }
-            }
-        }
+        if (nsig < 0)
+            continue;
 
         /* If listen socket is ready, start a new connection */
         if (FD_ISSET(server->socket, &rfds)) {
@@ -260,7 +281,9 @@ jrs_server_run(jrs_server_t *server)
                             FD_ISSET(conn->socket, &rfds),
                             FD_ISSET(conn->socket, &efds),
                             FD_ISSET(conn->socket, &wfds))) {
+                    close(conn->socket);
                     DLIST_REMOVE(conn);
+                    apr_pool_destroy(conn->pool);
                 }
             }
         }

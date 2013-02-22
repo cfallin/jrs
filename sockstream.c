@@ -193,8 +193,6 @@ jrs_sockstream_sendrecv(jrs_sockstream_t *sockstream, int rflag)
     if (sockstream->err)
         return 1;
 
-    jrs_log("sendrecv on socket %d", sockstream->sockfd);
-
     /* do we have anything to send? */
     while (jrs_fifo_avail(sockstream->writefifo)) {
         ssize_t written;
@@ -202,7 +200,6 @@ jrs_sockstream_sendrecv(jrs_sockstream_t *sockstream, int rflag)
         int datalen;
         datalen = jrs_fifo_peek_nocopy(sockstream->writefifo, &data,
                 jrs_fifo_avail(sockstream->writefifo));
-        jrs_log("sendrecv: %d bytes for writing", datalen);
         written = send(sockstream->sockfd, data, datalen, MSG_DONTWAIT);
         if (written > 0)
             jrs_fifo_advance(sockstream->writefifo, written);
@@ -229,13 +226,9 @@ jrs_sockstream_sendrecv(jrs_sockstream_t *sockstream, int rflag)
         if (readbytes == 0 && rflag) /* EOF */
             sockstream->err = 1;
 
-        jrs_log("sendrecv: %d bytes read", readbytes);
-
         for (i = 0; i < readbytes; i++)
-            if (buf[i] == '\n') {
+            if (buf[i] == '\n')
                 sockstream->read_lines++;
-                jrs_log("sendrecv: got a newline");
-            }
 
         if (readbytes <= 0) {
             if (errno == ECONNREFUSED || errno == ENOTCONN)

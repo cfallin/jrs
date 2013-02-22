@@ -35,7 +35,7 @@ struct jrs_conn_t {
 struct jrs_job_t {
     apr_pool_t *pool;
     pid_t pid;
-    const char *cmdline;
+    uint64_t id;
     int done;
 
     jrs_server_t *server;
@@ -46,10 +46,12 @@ struct jrs_server_t {
     apr_pool_t *pool;
     int port;
     int socket;
-    int sigchld_flag;
+    int selfpipe[2];
 
     jrs_conn_t conns; /* sentinel */
     jrs_job_t jobs;   /* sentinel */
+
+    uint64_t jobid; /* monotonically increasing */
 };
 
 apr_status_t jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port);
