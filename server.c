@@ -84,12 +84,9 @@ jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port,
 
     ret->secretfile = secretfile;
 
-    if (gettimeofday(&tv, NULL) == 0) {
-        ret->jobid = tv.tv_sec * 1000000 + tv.tv_usec;
-    }
-    else {
+    ret->jobid = time_usec();
+    if (!ret->jobid)
         ret->jobid = rand();
-    }
 
     ret->mode = mode;
 

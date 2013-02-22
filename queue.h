@@ -40,6 +40,9 @@ struct job_t {
     /* used when job-list is received from each node */
     int mark;
 
+    /* timestamp of last job start */
+    uint64_t start_timestamp;
+
     char *cmdline, *cwd;
 
     cluster_t *cluster;
@@ -77,6 +80,8 @@ struct node_t {
 
     int cores;
     int sent; /* cores which are committed to sent jobs */
+    int running; /* cores which are actively running our jobs */
+    int all_running; /* cores which are actively running any jobs */
     double loadavg;
     int mem;
 
@@ -106,11 +111,14 @@ struct cluster_t {
     int req_cores;
 
     config_t *config;
+
+    void *policy_impl; /* opaque */
 };
 
 struct config_t {
     char **nodes; /* null-terminated list of char* */
     char *secretfile;
+    char *username;
     int port;
     char *mgrnode;
 };
@@ -126,14 +134,14 @@ typedef struct {
     void (*removejob)(job_t *job);
 } cluster_ops_t;
 
+extern cluster_ops_t cluster_ops;
+
 apr_status_t node_create(node_t **outnode, cluster_t *cluster, char *nodename,
         apr_pool_t *pool);
 void node_destroy(node_t *node);
 
 apr_status_t cluster_create(cluster_t **outcluster, config_t *config, apr_pool_t *pool);
 void cluster_destroy(cluster_t *cluster);
-
-int cluster_populatejobs(cluster_t *cluster, char *jobfile);
 
 typedef void (*cluster_policy_func_t)(cluster_t *cluster, cluster_ops_t *ops);
 

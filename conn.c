@@ -213,15 +213,6 @@ conn_cmd_stats(jrs_conn_t *conn)
 
 /* ===================== MGR SERVER ====================== */
 
-static uint64_t
-time_usec()
-{
-    struct timeval tv;
-    if (gettimeofday(&tv, NULL))
-        return 0;
-    return (tv.tv_sec * 1000000) + tv.tv_usec;
-}
-
 static void
 age_out_nodes(jrs_server_t *server)
 {
@@ -260,6 +251,10 @@ assign_cores(jrs_server_t *server)
     cores_per_user = server->mgr.corecount / server->mgr.usercount;
     /* a few users get lucky with the remainder cores */
     remainder = server->mgr.corecount % server->mgr.usercount;
+
+    jrs_log("assigning cores: %d cores total, %d users -> %d cores/user, %d remainder",
+            server->mgr.corecount, server->mgr.usercount, cores_per_user,
+            remainder);
 
     DLIST_FOREACH(&server->mgr.users, user) {
         user->cores = cores_per_user;

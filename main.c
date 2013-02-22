@@ -7,6 +7,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <syslog.h>
+#include <pwd.h>
 
 #include <apr_general.h>
 #include <apr_pools.h>
@@ -18,6 +19,7 @@
 #include "server.h"
 #include "client.h"
 #include "queue.h"
+#include "queuedriver.h"
 
 int shutdown_signal = 0;
 int jrs_log_syslog = 0;
@@ -146,7 +148,7 @@ main(int argc,
         return 1;
     }
 
-    while ((rv = apr_getopt(opt, "dcnqs:l:p:fr:x:e:", &option_ch, &option_arg)) ==
+    while ((rv = apr_getopt(opt, "dcnqs:l:p:fr:x:e:m:", &option_ch, &option_arg)) ==
             APR_SUCCESS) {
         switch (option_ch) {
             case 'l': /* listen port */
@@ -280,6 +282,8 @@ main(int argc,
 
     else if (option_queuemode) {
         FILE *f;
+        struct passwd *pw;
+        uid_t uid;
         char buf[1024];
         cluster_t *cluster;
 
@@ -289,6 +293,15 @@ main(int argc,
         config.secretfile = option_secretfile;
         int nodeN = 4096;
         config.nodes = malloc(sizeof(char *) * nodeN);
+
+        /* get the username */
+        uid = geteuid();
+        pw = getpwuid(uid);
+
+        if (pw)
+            config.username = pw->pw_name;
+        else
+            config.username = "nobody";
 
         char **nodelistp = config.nodes, **nodelistend = (config.nodes + nodeN - 1);
 
@@ -324,10 +337,10 @@ main(int argc,
         jrs_log("starting queue manager");
 
         /* populate the jobs */
-        cluster_populatejobs(cluster, option_joblist);
+        queue_populate(cluster, &cluster_ops, option_joblist);
 
         /* run the policy */
-        cluster_run(cluster, cluster_basic_policy);
+        cluster_run(cluster, queue_policy);
 
         jrs_log("shutting down");
 

@@ -24,6 +24,7 @@ static void req_done(req_t *req, uint8_t *buf, int len);
 static void handle_response(node_t *node, uint8_t *buf, int len);
 static void start_connection(node_t *node);
 static int  handle_conn(node_t *node, int rflag, int eflag, int wflag);
+static void killall_jobs(cluster_t *cluster, cluster_ops_t *ops);
 
 apr_status_t
 cluster_create(cluster_t **outcluster, config_t *config, apr_pool_t *pool)
@@ -189,10 +190,11 @@ cluster_ops_updatenode(node_t *node)
 {
     if (node->mgr) {
         if (!node->idented) {
-            enqueue_req(node, 'I', NULL, NULL, 0, NULL, 0, NULL);
+            enqueue_req(node, 'I', NULL, NULL, 0, NULL, 0, node->cluster->config->username);
             node->idented = 1;
         }
         enqueue_req(node, 'R', NULL, NULL, 0, NULL, node->cluster->req_cores, NULL);
+        enqueue_req(node, 'N', NULL, NULL, 0, NULL, 0, NULL);
     }
     else {
         enqueue_req(node, 'L', NULL, NULL, 0, NULL, 0, NULL);
@@ -209,6 +211,7 @@ cluster_ops_sendjob(node_t *node, job_t *job)
     job->state = JOBSTATE_SENT;
     job->node = node;
     job->jobid = 0; /* don't have a jobid until response comes back */
+    node->sent++;
 
     enqueue_req(node, 'N', job->cmdline, job->cwd, 0, job, 0, NULL);
 }
@@ -238,7 +241,7 @@ cluster_ops_removejob(job_t *job)
     }
 }
 
-static cluster_ops_t ops = {
+cluster_ops_t cluster_ops = {
     .updatenode = &cluster_ops_updatenode,
     .createjob = &cluster_ops_createjob,
     .sendjob = &cluster_ops_sendjob,
@@ -261,6 +264,8 @@ enqueue_req(node_t *node, char type, char *cmdline, char *cwd, uint64_t jobid,
     req = apr_pcalloc(subpool, sizeof(req_t));
     if (!req)
         goto out;
+
+    req->type = type;
 
     char buf[65536];
     if (!node->mgr) {
@@ -300,12 +305,14 @@ enqueue_req(node_t *node, char type, char *cmdline, char *cwd, uint64_t jobid,
                     remaining -= len;
 
                     DLIST_FOREACH(&node->cluster->nodes, n) {
+                        if (n->mgr) continue;
                         if (n->cores > 0) {
-                            len = snprintf(buf, remaining, "%s %d ", n->hostname, n->cores);
+                            len = snprintf(p, remaining, "%s %d ", n->hostname, n->cores);
                             p += len;
                             remaining -= len;
                         }
                     }
+                    len = snprintf(p, remaining, "\r\n");
                 }
                 break;
             case 'R':
@@ -323,10 +330,15 @@ enqueue_req(node_t *node, char type, char *cmdline, char *cwd, uint64_t jobid,
 
     req->node = node;
 
+    /*
+    jrs_log("ENQUEUE -> node '%s' mgr %d: %s",
+            req->node->hostname, req->node->mgr, req->req);
+            */
+
     DLIST_INSERT(DLIST_TAIL(&node->reqs), req);
 
     if (!node->curreq)
-        handle_response(node, NULL, 0);
+        handle_conn(node, 0, 0, 0);
 
     return APR_SUCCESS;
 
@@ -339,6 +351,14 @@ out:
 static void
 req_done(req_t *req, uint8_t *buf, int len)
 {
+    /*
+    jrs_log("REQDONE (node '%s' mgr %d type '%c'):\n\t%s ->\n\t%s",
+            req->node->hostname, req->node->mgr,
+            req->type,
+            req->req,
+            buf);
+            */
+
     if (req->node->mgr) {
         switch (req->type) {
             case 'I':
@@ -357,6 +377,8 @@ req_done(req_t *req, uint8_t *buf, int len)
                  * state. */
                 req->job->jobid = strtoull(buf, NULL, 10);
                 req->job->state = JOBSTATE_RUNNING;
+                DLIST_INSERT(DLIST_TAIL(&req->job->node->jobs), req->job);
+                req->node->sent--;
 
                 /* is kill flag set? if so, this is a delayed kill.
                  * queue up a kill request. else, leave it in the
@@ -375,11 +397,16 @@ req_done(req_t *req, uint8_t *buf, int len)
                         job->mark = 0;
                     }
 
+                    req->node->all_running = 0;
+
                     /* tokenize the list and examine each current jobid */
                     for (tok = strtok_r(buf, " ", &saveptr);
                             tok;
                             tok = strtok_r(NULL, " ", &saveptr)) {
                         uint64_t jobid = strtoull(tok, NULL, 10);
+
+                        /* count all jobs on this node */
+                        req->node->all_running++;
 
                         /* is job currently running? */
                         int found = 0;
@@ -391,10 +418,8 @@ req_done(req_t *req, uint8_t *buf, int len)
                             }
                         }
 
-                        /* if not currently running -- someone else's job? leftover?
-                         * don't care, just kill it. */
-                        if (!found)
-                            enqueue_req(req->node, 'K', NULL, NULL, jobid, NULL, 0, NULL);
+                        /* if not currently running -- someone else's job.
+                         * Leave it. */
                     }
 
                     /* for all jobs not marked, remove them from the list. */
@@ -420,6 +445,10 @@ req_done(req_t *req, uint8_t *buf, int len)
                     req->node->cores = atoi(cores_str);
                     req->node->loadavg = atof(loadavg_str);
                     req->node->mem = atoi(mem_str);
+                    /*
+                    jrs_log("status update from '%s': %d cores", req->node->hostname,
+                            req->node->cores);
+                            */
                 }
                 break;
             case 'K':
@@ -442,6 +471,11 @@ handle_response(node_t *node, uint8_t *buf, int len)
         node->curreq = DLIST_HEAD(&node->reqs);
         DLIST_REMOVE(node->curreq);
 
+        /*
+        jrs_log("sending next req to node %s mgr %d: %s", node->hostname, node->mgr,
+                node->curreq->req);
+                */
+
         jrs_sockstream_write(node->sockstream, node->curreq->req,
                 node->curreq->len);
     }
@@ -455,6 +489,7 @@ start_connection(node_t *node)
     int sockfd;
     char portstr[16];
     struct addrinfo *addrinfo, hints;
+    int portdelta;
 
     if (node->sockstream)
         jrs_sockstream_destroy(node->sockstream);
@@ -465,7 +500,8 @@ start_connection(node_t *node)
 
     /* look up the host */
     rv = APR_ENOENT;
-    snprintf(portstr, sizeof(portstr), "%d", node->cluster->config->port);
+    portdelta = node->mgr ? 1 : 0;
+    snprintf(portstr, sizeof(portstr), "%d", node->cluster->config->port + portdelta);
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = 0;
@@ -534,6 +570,10 @@ handle_conn(node_t *node, int rflag, int eflag, int wflag)
 
     assert(cryptostate == CRYPTO_ESTABLISHED);
 
+    /* if any reqs are ready and there is no current req, send it. */
+    if (!node->curreq && (DLIST_HEAD(&node->reqs) != DLIST_END(&node->reqs)))
+        handle_response(node, NULL, 0);
+
     /* line available? */
     if (!jrs_sockstream_hasline(node->sockstream))
         return 0;
@@ -559,6 +599,7 @@ cluster_run(cluster_t *cluster, cluster_policy_func_t policy)
     int maxfd, nsig;
 
     while (!shutdown_signal) {
+        struct timeval tv;
 
         /* for each node, check connection state. Build fd sets for select(). */
         FD_ZERO(&rfds);
@@ -583,7 +624,9 @@ cluster_run(cluster_t *cluster, cluster_policy_func_t policy)
             }
         }
 
-        nsig = select(maxfd, &rfds, &wfds, &efds, NULL);
+        tv.tv_sec = 0;
+        tv.tv_usec = 50*1000;
+        nsig = select(maxfd, &rfds, &wfds, &efds, &tv);
 
         if (shutdown_signal)
             break;
@@ -618,12 +661,22 @@ cluster_run(cluster_t *cluster, cluster_policy_func_t policy)
         /* now invoke the policy. it will examine the current cluster state and
          * potentially invoke commands which modify state and enqueue node
          * requests. */
-        policy(cluster, &ops);
+        policy(cluster, &cluster_ops);
     }
+
+    /* kill all jobs when we exit. */
+    killall_jobs(cluster, &cluster_ops);
 }
 
-int
-cluster_populatejobs(cluster_t *cluster, char *jobfile)
+static void
+killall_jobs(cluster_t *cluster, cluster_ops_t *ops)
 {
-    return 0;
+    job_t *job, *njob;
+
+    for (job = DLIST_HEAD(&cluster->jobs); job != DLIST_END(&cluster->jobs);
+            job = njob) {
+        njob = DLIST_NEXT(job);
+
+        ops->removejob(job);
+    }
 }

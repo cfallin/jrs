@@ -13,6 +13,9 @@ void apr_perror(apr_status_t rv, const char *msg);
 /* global flag set by signal handler for deadly signals */
 extern int shutdown_signal;
 
+/* current time since epoch in microseconds */
+uint64_t time_usec();
+
 /* generic circular-doubly-linked-list (with sentinel) macros */
 #define DLIST_INSERT_EX(after, suffix, node) \
     do { \

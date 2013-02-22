@@ -1,0 +1,230 @@
+#include "queue.h"
+#include "util.h"
+#include "crypto.h"
+
+#include <apr_general.h>
+#include <apr_errno.h>
+#include <apr_pools.h>
+#include <apr_strings.h>
+#include <apr_tables.h>
+#include <ctype.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <assert.h>
+
+/* policy state */
+typedef struct {
+    uint64_t last_update;
+} policystate_t;
+
+/* internal functions */
+static void state_init(policystate_t *st);
+static job_t *queue_populate_job(cluster_t *cluster, cluster_ops_t *ops,
+        char *iwd, char *exe, char *args);
+
+static void
+state_init(policystate_t *st)
+{
+    st->last_update = 0;
+}
+
+static job_t *
+queue_populate_job(cluster_t *cluster, cluster_ops_t *ops,
+        char *iwd, char *exe, char *args)
+{
+    char cmdline[8192];
+    snprintf(cmdline, sizeof(cmdline), "%s %s", exe, args);
+    jrs_log("new job: iwd = %s cmdline = %s", iwd, cmdline);
+    return ops->createjob(cluster, iwd, cmdline);
+}
+
+int
+queue_populate(cluster_t *cluster, cluster_ops_t *ops, char *jobfile)
+{
+    char buf[4096], exe[4096], args[4096], iwd[4096];
+    struct stat statbuf, statbuf2;
+    apr_array_header_t *jobarr;
+    char *s;
+    FILE *f = fopen(jobfile, "r");
+
+    /* parse a condor-like jobfile */
+    exe[0] = 0; args[0] = 0;
+    s = getcwd(iwd, sizeof(iwd));
+    jobarr = apr_array_make(cluster->pool, 0, sizeof(job_t*));
+    while (fgets(buf, sizeof(buf), f)) {
+        char *begin, *end, *key, *value;
+
+        /* strip begin and end */
+        begin = buf;
+        while (*begin && isspace(*begin)) begin++;
+        end = begin + strlen(begin) - 1;
+        while (end >= begin && isspace(*end)) *end-- = 0;
+
+        /* blank line? continue */
+        if (!*begin) continue;
+
+        /* equal to "queue": add a job */
+        if (!strncasecmp(begin, "queue", strlen("queue"))) {
+            job_t *j = queue_populate_job(cluster, ops, iwd, exe, args);
+            *((job_t **)apr_array_push(jobarr)) = j;
+            continue;
+        }
+
+        /* it's going to be a "key = value" line: find the key and value */
+        key = strtok(begin, "=");
+        value = strtok(NULL, "=");
+        if (!value) continue;
+        while (*value && isspace(*value)) value++;
+
+        /* starts with 'Executable =': save executable name */
+        if (!strncasecmp(begin, "executable", strlen("executable")))
+            strncpy(exe, value, sizeof(exe));
+        else if (!strncasecmp(begin, "arguments", strlen("arguments")))
+            strncpy(args, value, sizeof(args));
+        else if (!strncasecmp(begin, "initialdir", strlen("arguments")))
+            strncpy(iwd, value, sizeof(iwd));
+    }
+
+    fclose(f);
+}
+
+static int
+rand_coinflip(float prob)
+{
+    float x = (float)rand()/(float)INT_MAX;
+    return (x <= prob) ? 1 : 0;
+}
+
+void
+queue_policy(cluster_t *cluster, cluster_ops_t *ops)
+{
+    node_t *node;
+    job_t *job;
+    policystate_t *st;
+    int running, queued;
+    int delta;
+    uint64_t now = time_usec();
+
+    /* update our state. */
+    if (!cluster->policy_impl) {
+        cluster->policy_impl = apr_pcalloc(cluster->pool, sizeof(policystate_t));
+        state_init(cluster->policy_impl);
+    }
+    st = cluster->policy_impl;
+
+    /* request an update from every node twice per second. */
+    if ((now - st->last_update) > 500000) {
+        DLIST_FOREACH(&cluster->nodes, node) {
+            ops->updatenode(node);
+        }
+
+        /* do we have any jobs on nodes which are overcommited? probabilistcally
+         * remove them once per second. */
+        DLIST_FOREACH(&cluster->nodes, node) {
+            if (node->running > 0 &&
+                    node->all_running > node->cores &&
+                    rand_coinflip(0.1)) {
+                job_t *j = DLIST_HEAD(&node->jobs);
+                jrs_log("node '%s' is overcommited: running %d of our jobs, %d total, on %d cores",
+                        node->hostname, node->running, node->all_running, node->cores);
+                ops->removejob(j);
+                jrs_log("removed job %d from node '%s'", j->jobid, node->hostname);
+            }
+        }
+
+        /* count running jobs and queued jobs. */
+        running = 0;
+        DLIST_FOREACH(&cluster->nodes, node) {
+            node->running = 0;
+            if (node->mgr) continue;
+            DLIST_FOREACH(&node->jobs, job) {
+                /* we are counting only *our* jobs on this node. */
+                running++;
+                node->running++;
+            }
+        }
+
+        queued = 0;
+        DLIST_FOREACH(&cluster->jobs, job) {
+            queued++;
+        }
+
+        /* always request exactly the number of running + queued jobs as cores
+         * (this is a maximum; we likely won't get it if we have many queued jobs)
+         * */
+        cluster->req_cores = queued + running;
+
+        /* how many cores should we occupy or vacate? */
+        delta = cluster->alloced_cores - running;
+
+        jrs_log("queued: %d; running: %d; req'd cores: %d; alloc'd cores: %d",
+                queued, running, cluster->req_cores, cluster->alloced_cores);
+
+        /* should we send jobs to cores? */
+        while (delta > 0) {
+            /* pick a job off the queue */
+            job = DLIST_HEAD(&cluster->jobs);
+            if (job == DLIST_END(&cluster->jobs))
+                break;
+            DLIST_REMOVE(job);
+
+            /* find any node with an open core that we haven't committed yet. */
+            int sent = 0;
+            DLIST_FOREACH(&cluster->nodes, node) {
+                if (node->all_running + node->sent < node->cores) {
+                    ops->sendjob(node, job);
+                    sent = 1;
+                    break;
+                }
+            }
+
+            /* if that didn't work, then pick any node with fewer confirmed
+             * running jobs than cores. */
+            if (!sent) {
+                DLIST_FOREACH(&cluster->nodes, node) {
+                    if (node->all_running < node->cores) {
+                        ops->sendjob(node, job);
+                        sent = 1;
+                        break;
+                    }
+                }
+            }
+
+            if (sent) {
+                jrs_log("sent job '%s' to node '%s'.", job->cmdline, job->node->hostname);
+                job->start_timestamp = time_usec();
+            }
+        }
+
+        /* should we remove jobs from cores? */
+        while (delta < 0) {
+            job_t *mostrecent = NULL;
+
+            /* find the most recently started job */
+            DLIST_FOREACH(&cluster->nodes, node) {
+                DLIST_FOREACH(&node->jobs, job) {
+                    if (!mostrecent || job->start_timestamp >
+                            mostrecent->start_timestamp)
+                        mostrecent = job;
+                }
+            }
+
+            /* kill it */
+            if (mostrecent) {
+                mostrecent->node->running--;
+                mostrecent->node->all_running--;
+                ops->removejob(mostrecent);
+                mostrecent->start_timestamp = 0;
+                delta++;
+                jrs_log("reducing footprint: removed job '%s' from node '%s'.",
+                        job->cmdline, job->node->hostname);
+            }
+            else
+                break;
+        }
+
+        st->last_update = now;
+    }
+}

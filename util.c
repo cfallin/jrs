@@ -35,3 +35,12 @@ jrs_logv(const char *fmt, va_list args)
         fprintf(stderr, "JRS: %s\n", buf);
     }
 }
+
+uint64_t
+time_usec()
+{
+    struct timeval tv;
+    if (gettimeofday(&tv, NULL))
+        return 0;
+    return (tv.tv_sec * 1000000) + tv.tv_usec;
+}
