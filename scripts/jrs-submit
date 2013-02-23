@@ -9,6 +9,6 @@ fi
 installroot=`readlink -f $0`
 installroot=`dirname $installroot`
 
-. jrs.conf
+. $installroot/jrs.conf
 
 exec $jrsbin -q -s $secret -m $master -e $nodelist -l $port -x $1

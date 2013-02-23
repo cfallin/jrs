@@ -15,24 +15,12 @@ case "$mode" in
 
     start)
         if [ $host = $master ]; then
-            if [ -f ${pidpath}-master.pid ]; then
-                echo JRS metadata server is already running: pid `cat ${pidpath}-master.pid`.
-            else
-                echo -n Starting JRS metadata master...
-                $jrsbin -n -s $secret -l $((port + 1)) -p ${pidpath}-master.pid
-                if [ $? -eq 0 ]; then echo OK.; else echo Failed.; fi
-            fi
+            $jrsbin -n -s $secret -l $((port + 1)) -p ${pidpath}-master.pid
         fi
 
         grep -q $host $nodelist
         if [ $? -eq 0 ]; then
-            if [ -f ${pidpath}-daemon.pid ]; then
-                echo JRS daemon is already running: pid `cat ${pidpath}-daemon.pid`.
-            else
-                echo -n Starting JRS daemon... 
-                $jrsbin -d -s $secret -l $port -p ${pidpath}-daemon.pid
-                if [ $? -eq 0 ]; then echo OK.; else echo Failed.; fi
-            fi
+            $jrsbin -d -s $secret -l $port -p ${pidpath}-daemon.pid
         fi
 
         ;;

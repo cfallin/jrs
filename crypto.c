@@ -45,6 +45,7 @@ crypto_start(jrs_sockstream_t *sockstream, char *secretfile, crypto_state_t *sta
     /* read the secret file and set up the state. */
     f = fopen(secretfile, "r");
     if (!f) {
+        perror("error");
         jrs_log("could not read secret file '%s'.", secretfile);
         return 1;
     }

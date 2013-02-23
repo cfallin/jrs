@@ -36,7 +36,9 @@ queue_populate_job(cluster_t *cluster, cluster_ops_t *ops,
 {
     char cmdline[8192];
     snprintf(cmdline, sizeof(cmdline), "%s %s", exe, args);
+    /*
     jrs_log("new job: iwd = %s cmdline = %s", iwd, cmdline);
+    */
     return ops->createjob(cluster, iwd, cmdline);
 }
 
@@ -127,10 +129,12 @@ queue_policy(cluster_t *cluster, cluster_ops_t *ops)
                     node->all_running > node->cores &&
                     rand_coinflip(0.1)) {
                 job_t *j = DLIST_HEAD(&node->jobs);
+                /*
                 jrs_log("node '%s' is overcommited: running %d of our jobs, %d total, on %d cores",
                         node->hostname, node->running, node->all_running, node->cores);
+                        */
                 ops->removejob(j);
-                jrs_log("removed job %d from node '%s'", j->jobid, node->hostname);
+                /*jrs_log("removed job %d from node '%s'", j->jobid, node->hostname);*/
             }
         }
 
@@ -190,20 +194,10 @@ queue_policy(cluster_t *cluster, cluster_ops_t *ops)
                 }
             }
 
-            /* if that didn't work, then pick any node with fewer confirmed
-             * running jobs than cores. */
-            if (!sent) {
-                DLIST_FOREACH(&cluster->nodes, node) {
-                    if (node->all_running < node->cores) {
-                        ops->sendjob(node, job);
-                        sent = 1;
-                        break;
-                    }
-                }
-            }
-
             if (sent) {
-                jrs_log("sent job '%s' to node '%s'.", job->cmdline, job->node->hostname);
+                /*
+                jrs_log("sent job %d to node '%s'.", job->seq, job->node->hostname);
+                */
                 job->start_timestamp = time_usec();
             }
         }
@@ -223,13 +217,15 @@ queue_policy(cluster_t *cluster, cluster_ops_t *ops)
 
             /* kill it */
             if (mostrecent) {
+                /*
+                jrs_log("reducing footprint: removed job %d from node '%s'.",
+                        mostrecent->seq, mostrecent->node->hostname);
+                        */
                 mostrecent->node->running--;
                 mostrecent->node->all_running--;
                 ops->removejob(mostrecent);
                 mostrecent->start_timestamp = 0;
                 delta++;
-                jrs_log("reducing footprint: removed job '%s' from node '%s'.",
-                        job->cmdline, job->node->hostname);
             }
             else
                 break;

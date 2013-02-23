@@ -13,6 +13,7 @@
 #include <netinet/in.h>
 #include <netdb.h>
 #include <assert.h>
+#include <fcntl.h>
 
 static job_t *cluster_ops_createjob(cluster_t *cluster, char *cwd, char *cmdline);
 static void cluster_ops_updatenode(node_t *node);
@@ -23,6 +24,7 @@ static apr_status_t  enqueue_req(node_t *node, char type, char *cmdline,
 static void req_done(req_t *req, uint8_t *buf, int len);
 static void handle_response(node_t *node, uint8_t *buf, int len);
 static void start_connection(node_t *node);
+static void wait_connection(node_t *node);
 static int  handle_conn(node_t *node, int rflag, int eflag, int wflag);
 static void killall_jobs(cluster_t *cluster, cluster_ops_t *ops);
 
@@ -169,6 +171,7 @@ cluster_ops_createjob(cluster_t *cluster, char *cwd, char *cmdline)
     job->jobid = 0;
     job->killed = 0;
     job->mark = 0;
+    job->seq = cluster->seq++;
 
     job->cwd = apr_pstrdup(pool, cwd);
     job->cmdline = apr_pstrdup(pool, cmdline);
@@ -233,10 +236,14 @@ cluster_ops_removejob(job_t *job)
             break;
 
         case JOBSTATE_RUNNING:
-            /* send a kill command. */
-            enqueue_req(job->node, 'K', NULL, NULL, job->jobid, job, 0, NULL);
             /* remove the job from the running list immediately. */
             DLIST_REMOVE(job);
+            /* re-enqueue the job. */
+            DLIST_INSERT(DLIST_TAIL(&job->node->cluster->jobs), job);
+            /* send a kill command. */
+            enqueue_req(job->node, 'K', NULL, NULL, job->jobid, job, 0, NULL);
+            job->node = NULL;
+            job->state = JOBSTATE_QUEUED;
             break;
     }
 }
@@ -337,7 +344,7 @@ enqueue_req(node_t *node, char type, char *cmdline, char *cwd, uint64_t jobid,
 
     DLIST_INSERT(DLIST_TAIL(&node->reqs), req);
 
-    if (!node->curreq)
+    if (!node->curreq && node->state == NODESTATE_CONNECTED)
         handle_conn(node, 0, 0, 0);
 
     return APR_SUCCESS;
@@ -380,6 +387,7 @@ req_done(req_t *req, uint8_t *buf, int len)
                  * state. */
                 req->job->jobid = strtoull(buf, NULL, 10);
                 req->job->state = JOBSTATE_RUNNING;
+                req->job->node = req->node;
                 DLIST_INSERT(DLIST_TAIL(&req->job->node->jobs), req->job);
                 req->node->sent--;
 
@@ -494,6 +502,8 @@ start_connection(node_t *node)
     struct addrinfo *addrinfo, hints;
     int portdelta;
 
+    node->last_connect_retry = time_usec();
+
     if (node->sockstream)
         jrs_sockstream_destroy(node->sockstream);
 
@@ -523,8 +533,13 @@ start_connection(node_t *node)
         if (sockfd == -1)
             continue;
 
-        if (connect(sockfd, addrinfo->ai_addr, addrinfo->ai_addrlen) == -1)
-            continue;
+        fcntl(sockfd, F_SETFL, fcntl(sockfd, F_GETFL) | O_NONBLOCK);
+        if (connect(sockfd, addrinfo->ai_addr, addrinfo->ai_addrlen) == -1) {
+            if (errno != EINPROGRESS) {
+                close(sockfd);
+                continue;
+            }
+        }
 
         connected = 1;
         break;
@@ -533,17 +548,26 @@ start_connection(node_t *node)
     if (!connected)
         return;
 
+    node->state = NODESTATE_CONNECTING;
+    node->sockfd = sockfd;
+}
+
+static void
+wait_connection(node_t *node)
+{
+    apr_status_t rv;
+
     /* create a sockstream */
-    rv = jrs_sockstream_create(&node->sockstream, sockfd, node->pool);
+    rv = jrs_sockstream_create(&node->sockstream, node->sockfd, node->pool);
     if (rv != APR_SUCCESS) {
-        close(sockfd);
+        close(node->sockfd);
         return;
     }
 
     /* start encryption */
     if (crypto_start(node->sockstream, node->cluster->config->secretfile,
                 &node->crypto)) {
-        close(sockfd);
+        close(node->sockfd);
         return;
     }
 
@@ -611,8 +635,13 @@ cluster_run(cluster_t *cluster, cluster_policy_func_t policy)
         maxfd = 0;
         DLIST_FOREACH(&cluster->nodes, node) {
             if (node->state == NODESTATE_INIT) {
-                start_connection(node);
-                node->state = NODESTATE_CONNECTED;
+                if ((time_usec() - node->last_connect_retry > 1*1000*1000))
+                    start_connection(node);
+            }
+            else if (node->state == NODESTATE_CONNECTING) {
+                FD_SET(node->sockfd, &wfds);
+                if (node->sockfd >= maxfd)
+                    maxfd = node->sockfd + 1;
             }
 
             if (node->sockstream) {
@@ -641,22 +670,30 @@ cluster_run(cluster_t *cluster, cluster_policy_func_t policy)
         DLIST_FOREACH(&cluster->nodes, node) {
             int fd, rflag, eflag, wflag;
 
-            if (!node->sockstream) continue;
-            fd = node->sockstream->sockfd;
+            fd = node->sockfd;
             rflag = FD_ISSET(fd, &rfds);
             eflag = FD_ISSET(fd, &efds);
             wflag = FD_ISSET(fd, &wfds);
 
-            if (handle_conn(node, rflag, eflag, wflag)) {
-                /* connection failure of some sort. Destroy and recreate the
-                 * connection. If there was a current request outstanding,
-                 * reinsert it at the head of the queue. */
-                jrs_sockstream_destroy(node->sockstream);
-                node->sockstream = NULL;
-                node->state = NODESTATE_INIT;
-                if (node->curreq) {
-                    DLIST_INSERT(DLIST_HEAD(&node->reqs), node->curreq);
-                    node->curreq = NULL;
+            if (wflag && node->state == NODESTATE_CONNECTING) {
+                wait_connection(node);
+            }
+
+            else if ((rflag || eflag || wflag) && node->state == NODESTATE_CONNECTED) {
+                if (handle_conn(node, rflag, eflag, wflag)) {
+                    /* connection failure of some sort. Destroy and recreate the
+                     * connection. If there was a current request outstanding,
+                     * reinsert it at the head of the queue. */
+                    jrs_sockstream_destroy(node->sockstream);
+                    close(node->sockfd);
+                    node->sockstream = NULL;
+                    node->state = NODESTATE_INIT;
+                    jrs_log("connection to node '%s' failed or reset; will retry.",
+                            node->hostname);
+                    if (node->curreq) {
+                        DLIST_INSERT(DLIST_HEAD(&node->reqs), node->curreq);
+                        node->curreq = NULL;
+                    }
                 }
             }
         }

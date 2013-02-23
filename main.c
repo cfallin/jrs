@@ -149,13 +149,14 @@ main(int argc,
 
     while ((rv = apr_getopt(opt, "dcnqs:l:p:fr:x:e:m:", &option_ch, &option_arg)) ==
             APR_SUCCESS) {
+        char *pidfilep = &pidfilename;
         switch (option_ch) {
             case 'l': /* listen port */
                 option_port = atoi(option_arg);
                 break;
 
             case 'p': /* pid file */
-                handle_filepath(option_arg, (char **)&pidfilename, sizeof(pidfilename));
+                handle_filepath(option_arg, &pidfilep, sizeof(pidfilename));
                 break;
 
             case 'f':

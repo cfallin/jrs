@@ -30,7 +30,8 @@ struct job_t {
 
     JobState state;
     node_t *node; /* currently executing, or sent to, this node */
-    uint64_t jobid;
+    uint64_t jobid; /* jobid at executing node */
+    uint64_t seq;   /* sequence number in our local seq-number namespace */
 
     /* kill-flag is set if job is removed but the job is pending on the sent
      * queue; once the job id comes back from the node, the job will be killed
@@ -65,14 +66,17 @@ struct req_t {
 
 typedef enum NodeState {
     NODESTATE_INIT,
+    NODESTATE_CONNECTING,
     NODESTATE_CONNECTED,
 } NodeState;
 
 struct node_t {
     apr_pool_t *pool;
+    int sockfd;
     jrs_sockstream_t *sockstream;
     char *hostname;
     crypto_state_t crypto;
+    uint64_t last_connect_retry;
 
     /* is this a mgr node? */
     int mgr;
@@ -111,6 +115,8 @@ struct cluster_t {
     int req_cores;
 
     config_t *config;
+
+    uint64_t seq;
 
     void *policy_impl; /* opaque */
 };
