@@ -6,9 +6,7 @@ if [ $# -ne 1 ]; then
     exit 1
 fi
 
-installroot=`readlink -f $0`
-installroot=`dirname $installroot`
 
-. $installroot/jrs.conf
+. /etc/jrs/jrs.conf
 
 exec $jrsbin -q -s $secret -m $master -e $nodelist -l $port -x $1

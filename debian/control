@@ -1,0 +1,19 @@
+Source: jrs
+Section: unknown
+Priority: extra
+Maintainer: Chris Fallin <cfallin@c1f.net>
+Build-Depends: debhelper (>= 8.0.0)
+Standards-Version: 3.9.3
+Homepage: <https://github.com/cfallin/jrs>
+#Vcs-Git: git://github.com/cfallin/jrs.git
+
+Package: jrs
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: JRS: Job-Running System
+ JRS is a very simple batch system.
+
+Package: jrs-doc
+Architecture: all
+Description: documentation for JRS
+ Documentation for JRS, the very simple batch system.

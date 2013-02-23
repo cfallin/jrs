@@ -1,14 +1,11 @@
 #!/bin/bash
 
-installroot=`readlink -f $0`
-installroot=`dirname $installroot`
-
 mode=$1
 if [ "x$mode" = "x" ]; then
     mode=start
 fi
 
-. $installroot/jrs.conf
+. /etc/jrs/jrs.conf
 host=`hostname`
 
 case "$mode" in
