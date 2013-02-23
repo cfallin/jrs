@@ -1,1 +1,1 @@
-update-rc.d jrs defaults 99
+update-rc.d jrs-daemon defaults 99
