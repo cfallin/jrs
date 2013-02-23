@@ -12,4 +12,4 @@ install:
 	cp scripts/secret ${DESTDIR}/etc/jrs
 	cp scripts/jrs-* ${DESTDIR}/usr/bin
 	mkdir -p ${DESTDIR}/etc/init.d
-	ln -s /usr/bin/jrs-daemon ${DESTDIR}/etc/init.d/jrs-daemon
+	cp scripts/jrs-daemon ${DESTDIR}/etc/init.d/jrs-daemon
