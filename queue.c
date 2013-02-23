@@ -758,8 +758,10 @@ cluster_run(cluster_t *cluster, cluster_policy_func_t policy)
                     close(node->sockfd);
                     node->sockstream = NULL;
                     node->state = NODESTATE_INIT;
+                    /*
                     jrs_log("connection to node '%s' failed or reset; will retry.",
                             node->hostname);
+                            */
 
                     /* clear out the request queue */
                     if (node->curreq) {
