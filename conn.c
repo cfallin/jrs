@@ -256,41 +256,20 @@ conn_cmd_finished(jrs_conn_t *conn)
 /* ===================== MGR SERVER ====================== */
 
 static void
-age_out_nodes(jrs_server_t *server)
-{
-    jrs_metadata_node_t *node, *nnode;
-
-    uint64_t now = time_usec();
-
-    for (node = DLIST_HEAD(&server->mgr.nodes);
-            node != DLIST_END(&server->mgr.nodes);
-            node = nnode) {
-        nnode = DLIST_NEXT(node);
-
-        if ((now - node->lastseen) > 10*1000000) {
-            DLIST_REMOVE(node);
-            char buf[1024];
-            server->mgr.corecount -= node->cores;
-            jrs_log("aging out old node '%s'.", node->hostname);
-            apr_hash_set(server->mgr.nodehash, node->hostname,
-                    strlen(node->hostname), NULL);
-            strncpy(buf, node->hostname, sizeof(buf));
-            apr_pool_destroy(node->pool);
-            node = apr_hash_get(server->mgr.nodehash, buf,
-                    strlen(buf));
-            jrs_log("hashtable probe for '%s': %p", buf, node);
-        }
-    }
-}
-
-static void
 assign_cores(jrs_server_t *server)
 {
     int cores;
     jrs_conn_t *conn;
+    jrs_metadata_node_t *node;
+    uint64_t now = time_usec();
 
-    /* get rid of old (aged-out) nodes first so our core count is accurate */
-    age_out_nodes(server);
+    /* update core count with only recently-seen nodes */
+    server->mgr.corecount = 0;
+    DLIST_FOREACH(&server->mgr.nodes, node) {
+        if ((now - node->lastseen) < 10 * 1000000) {
+            server->mgr.corecount += node->cores;
+        }
+    }
 
     /* reset allocations */
     DLIST_FOREACH(&server->conns, conn) {
@@ -358,12 +337,7 @@ conn_cmd_ident(jrs_conn_t *conn, char *args, int len)
         apr_hash_set(conn->server->mgr.userhash, args, strlen(args), user);
         DLIST_INSERT(DLIST_HEAD(&conn->server->mgr.users), user);
         conn->server->mgr.usercount++;
-        jrs_log("usercount bumped to %d (new user %s)",
-                conn->server->mgr.usercount,
-                args);
     }
-    else
-        jrs_log("found user: '%s' (%d connections previously)", args, user->conns);
 
     /* bump the connection count. */
     user->conns++;
@@ -410,7 +384,6 @@ conn_cmd_nodelist(jrs_conn_t *conn, char *args, int len)
 
             /* does an entry already exist? */
             node = apr_hash_get(conn->server->mgr.nodehash, hostname, strlen(hostname));
-            jrs_log("got node %p for hostname '%s' in nodehash", node, hostname);
             if (!node) {
                 rv = apr_pool_create(&pool, conn->server->pool);
                 if (rv != APR_SUCCESS)
@@ -427,7 +400,6 @@ conn_cmd_nodelist(jrs_conn_t *conn, char *args, int len)
                 apr_hash_set(conn->server->mgr.nodehash, hostname,
                         strlen(hostname), node);
                 DLIST_INSERT(DLIST_HEAD(&conn->server->mgr.nodes), node);
-                jrs_log("new node: '%s'", hostname);
             }
             
             /* update total core count */
