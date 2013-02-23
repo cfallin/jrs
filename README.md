@@ -15,9 +15,9 @@ JRS is a (distant) little cousin to mature systems such as
 [PBS](https://en.wikipedia.org/wiki/Portable_Batch_System). It differs from
 these systems in that it is extremely small and very simple to set up.
 
-JRS lives on the web at http://c1f.net/jrs/, and on GitHub at
-https://github.com/cfallin/jrs/. Packages for Debian can be found
-at http://c1f.net/jrs/packages/.
+JRS has a [homepage](http://c1f.net/jrs/). Its source repository is hosted on
+[GitHub](https://github.com/cfallin/jrs/). Packages for Debian-based
+distributions can be found [online](http://c1f.net/jrs/packages/).
 
 Installation
 ============
