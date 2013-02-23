@@ -33,17 +33,17 @@ Compiling
 Installing
 ----------
 
-JRS lives in a single installation path, by default `/usr/local/jrs`. To
-install JRS, simply run `./install.sh $MY_PATH`, where `$MY_PATH` is your
-installation path. This will install the binary, default configuration files,
-and wrapper scripts in the install path, and will place a link to `jrs-submit`
-in `/usr/local/bin` by default.
+JRS can be installed either as a Debian package or "from scratch". To build a
+Debian package, do the following:
 
-This install directory is "portable", in the sense that it can be copied
-verbatim (or shared over the network) across multiple nodes. The wrapper
-invocation scripts are smart enough to determine which node they are running
-on, so the configuration need not be specialized for master, compute, or client
-nodes.
+    $ ./build-deb.sh
+    $ dpkg -i jrs_1.0-1_amd64.deb   # for example
+
+Alternatively, simply do `make install` to install JRS.
+
+The JRS daemons should be started on boot for an ordinary compute cluster
+configuration. JRS installs an init-script at `/etc/init.d/jrs-daemon`. This
+script can be used to manually start/stop/restart the daemon(s) as well.
 
 Configuration
 -------------
