@@ -14,5 +14,5 @@ install:
 	mkdir -p ${DESTDIR}/etc/init.d
 	ln -s /usr/bin/jrs-daemon ${DESTDIR}/etc/init.d/jrs-daemon
 
-dist:
+deb:
 	(cd ..; cp -R jrs/ jrs-${VERSION}; tar jcvf jrs_${VERSION}.orig.tar.bz2 --exclude ".*" jrs-${VERSION}/; cd jrs-${VERSION}; debuild; cd ..; rm -rf jrs-${VERSION})
