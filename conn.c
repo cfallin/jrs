@@ -271,6 +271,8 @@ age_out_nodes(jrs_server_t *server)
             DLIST_REMOVE(node);
             server->mgr.corecount -= node->cores;
             jrs_log("aging out old node '%s'.", node->hostname);
+            apr_hash_set(server->mgr.nodehash, node->hostname,
+                    strlen(node->hostname), NULL);
             apr_pool_destroy(node->pool);
         }
     }
