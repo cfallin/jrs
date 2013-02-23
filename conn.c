@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include "conn.h"
 #include "util.h"
@@ -83,9 +85,13 @@ conn_cmd_new(jrs_conn_t *conn, char *args, int len)
         /* in child */
         int rc;
         if (chdir(cwd)) exit(1);
+        int fd = open("/dev/null", O_RDWR, 0644);
         close(0);
         close(1);
         close(2);
+        dup2(fd, 0);
+        dup2(fd, 1);
+        dup2(fd, 2);
 
         rc = execvp(argv[0], argv);
         if (rc != 0) exit(1);
@@ -93,6 +99,8 @@ conn_cmd_new(jrs_conn_t *conn, char *args, int len)
 
     /* in parent */
     job->pid = pid;
+
+    job->spawned_conn = conn;
 
     /* add to jobs list */
     DLIST_INSERT(DLIST_TAIL(&conn->server->jobs), job);
@@ -142,6 +150,8 @@ conn_cmd_kill(jrs_conn_t *conn, char *args, int len)
     DLIST_FOREACH(&conn->server->jobs, job) {
         if (job->id == jobid) {
             kill(job->pid, signal);
+            jrs_log("sending signal %d to pid %d (jobid %ld)", signal,
+                    job->pid, job->id);
             break;
         }
     }
@@ -426,6 +436,17 @@ conn_cmd_close(jrs_conn_t *conn)
             apr_pool_destroy(conn->usermeta->pool);
         }
         conn->usermeta = NULL;
+    }
+
+    /* if we're a jobs server, kill all jobs spawned by this connection. */
+    if (conn->server->mode == SERVERMODE_JOBS) {
+        jrs_job_t *job;
+        DLIST_FOREACH(&conn->server->jobs, job) {
+            if (job->spawned_conn == conn) {
+                kill(job->pid, 9);
+                job->spawned_conn = NULL;
+            }
+        }
     }
 }
 

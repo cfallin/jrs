@@ -129,12 +129,10 @@ queue_policy(cluster_t *cluster, cluster_ops_t *ops)
                     node->all_running > node->cores &&
                     rand_coinflip(0.1)) {
                 job_t *j = DLIST_HEAD(&node->jobs);
-                /*
                 jrs_log("node '%s' is overcommited: running %d of our jobs, %d total, on %d cores",
                         node->hostname, node->running, node->all_running, node->cores);
-                        */
                 ops->removejob(j);
-                /*jrs_log("removed job %d from node '%s'", j->jobid, node->hostname);*/
+                jrs_log("removed job %d from node '%s'", j->jobid, node->hostname);
             }
         }
 
@@ -182,7 +180,6 @@ queue_policy(cluster_t *cluster, cluster_ops_t *ops)
             job = DLIST_HEAD(&cluster->jobs);
             if (job == DLIST_END(&cluster->jobs))
                 break;
-            DLIST_REMOVE(job);
 
             /* find any node with an open core that we haven't committed yet. */
             int sent = 0;
@@ -195,11 +192,11 @@ queue_policy(cluster_t *cluster, cluster_ops_t *ops)
             }
 
             if (sent) {
-                /*
                 jrs_log("sent job %d to node '%s'.", job->seq, job->node->hostname);
-                */
                 job->start_timestamp = time_usec();
             }
+            else
+                break;
         }
 
         /* should we remove jobs from cores? */
@@ -217,10 +214,8 @@ queue_policy(cluster_t *cluster, cluster_ops_t *ops)
 
             /* kill it */
             if (mostrecent) {
-                /*
-                jrs_log("reducing footprint: removed job %d from node '%s'.",
+                jrs_log("reducing footprint: removed job %ld from node '%s'.",
                         mostrecent->seq, mostrecent->node->hostname);
-                        */
                 mostrecent->node->running--;
                 mostrecent->node->all_running--;
                 ops->removejob(mostrecent);

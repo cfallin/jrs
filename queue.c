@@ -14,6 +14,7 @@
 #include <netdb.h>
 #include <assert.h>
 #include <fcntl.h>
+#include <stdlib.h>
 
 static job_t *cluster_ops_createjob(cluster_t *cluster, char *cwd, char *cmdline);
 static void cluster_ops_updatenode(node_t *node);
@@ -624,9 +625,30 @@ cluster_run(cluster_t *cluster, cluster_policy_func_t policy)
     job_t *job;
     fd_set rfds, efds, wfds;
     int maxfd, nsig;
+    int killing = 0;
 
-    while (!shutdown_signal) {
+    while (1) {
         struct timeval tv;
+
+        /* if we're in shutdown killing mode, and all request queues are empty
+         * and all sockstreams have empty write FIFOs, we're done. */
+        if (killing) {
+            int ready_to_quit = 1;
+            DLIST_FOREACH(&cluster->nodes, node) {
+                if (node->sockstream &&
+                        jrs_fifo_avail(node->sockstream->writefifo)) {
+                    ready_to_quit = 0;
+                    break;
+                }
+                if (node->curreq || (DLIST_HEAD(&node->reqs) != DLIST_END(&node->reqs))) {
+                    ready_to_quit = 0;
+                    break;
+                }
+            }
+
+            if (ready_to_quit)
+                break;
+        }
 
         /* for each node, check connection state. Build fd sets for select(). */
         FD_ZERO(&rfds);
@@ -660,8 +682,16 @@ cluster_run(cluster_t *cluster, cluster_policy_func_t policy)
         tv.tv_usec = 50*1000;
         nsig = select(maxfd, &rfds, &wfds, &efds, &tv);
 
-        if (shutdown_signal)
-            break;
+        if (shutdown_signal) {
+            /* second Ctrl-C kills us. */
+            if (killing)
+                break;
+            else {
+                killall_jobs(cluster, &cluster_ops);
+                killing = 1;
+                shutdown_signal = 0;
+            }
+        }
 
         if (nsig < 0)
             continue;
@@ -698,25 +728,29 @@ cluster_run(cluster_t *cluster, cluster_policy_func_t policy)
             }
         }
 
-        /* now invoke the policy. it will examine the current cluster state and
-         * potentially invoke commands which modify state and enqueue node
-         * requests. */
-        policy(cluster, &cluster_ops);
+        if (!killing) {
+            /* now invoke the policy. it will examine the current cluster state and
+             * potentially invoke commands which modify state and enqueue node
+             * requests. */
+            policy(cluster, &cluster_ops);
+        }
     }
-
-    /* kill all jobs when we exit. */
-    killall_jobs(cluster, &cluster_ops);
 }
 
 static void
 killall_jobs(cluster_t *cluster, cluster_ops_t *ops)
 {
     job_t *job, *njob;
+    node_t *node;
 
-    for (job = DLIST_HEAD(&cluster->jobs); job != DLIST_END(&cluster->jobs);
-            job = njob) {
-        njob = DLIST_NEXT(job);
-
-        ops->removejob(job);
+    DLIST_FOREACH(&cluster->nodes, node) {
+        if (!node->sockstream) continue;
+        for (job = DLIST_HEAD(&node->jobs); job != DLIST_END(&node->jobs);
+                job = njob) {
+            njob = DLIST_NEXT(job);
+            ops->removejob(job);
+        }
+        jrs_sockstream_sendrecv(node->sockstream, 0);
     }
+
 }

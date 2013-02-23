@@ -51,6 +51,8 @@ struct jrs_job_t {
     uint64_t id;
     int done;
 
+    jrs_conn_t *spawned_conn;
+
     jrs_server_t *server;
     jrs_job_t *next, *prev;
 };
