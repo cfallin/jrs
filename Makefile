@@ -1,3 +1,5 @@
+VERSION=-1.0
+
 build:
 	scons
 
@@ -10,3 +12,6 @@ install:
 	cp scripts/secret ${DESTDIR}/etc/jrs
 	cp scripts/jrs-* ${DESTDIR}/usr/bin
 	ln -s /usr/bin/jrs-daemon ${DESTDIR}/etc/init.d/jrs-daemon
+
+dist:
+	(cd ..; tar jcvf jrs${VERSION}.tar.bz2 --exclude ".*" jrs${VERSION}/)
