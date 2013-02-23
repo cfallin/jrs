@@ -38,5 +38,10 @@ case "$mode" in
         fi
 
         ;;
+
+    restart)
+        $1 stop
+        $1 start
+        ;;
 esac
 
