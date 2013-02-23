@@ -419,7 +419,8 @@ req_done(req_t *req, uint8_t *buf, int len)
                         uint64_t jobid = strtoull(tok, NULL, 10);
 
                         /* count all jobs on this node */
-                        req->node->all_running++;
+                        if (jobid > 0)
+                            req->node->all_running++;
 
                         /* is job currently running? */
                         int found = 0;
