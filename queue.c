@@ -589,7 +589,7 @@ start_connection(node_t *node)
     if (!connected)
         return;
 
-    jrs_log("connecting to '%s'", node->hostname);
+    /*jrs_log("connecting to '%s'", node->hostname);*/
 
     node->state = NODESTATE_CONNECTING;
     node->sockfd = sockfd;
