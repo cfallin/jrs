@@ -303,6 +303,10 @@ main(int argc,
         char **nodelistp = config.nodes, **nodelistend = (config.nodes + nodeN - 1);
 
         f = fopen(option_nodelist, "r");
+        if (!f) {
+            fprintf(stderr, "Could not read node-list file '%s'\n", option_nodelist);
+            exit(1);
+        }
         while (fgets(buf, sizeof(buf), f) &&
                 nodelistp < nodelistend) {
             /* chop off newline */

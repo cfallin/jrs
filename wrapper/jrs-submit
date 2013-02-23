@@ -1,0 +1,14 @@
+#!/bin/bash
+
+if [ $# -ne 1 ]; then
+    exec 1>&2
+    echo Usage: jrs-submit [submitfile]
+    exit 1
+fi
+
+installroot=`readlink -f $0`
+installroot=`dirname $installroot`
+
+. jrs.conf
+
+exec $jrsbin -q -s $secret -m $master -e $nodelist -l $port -x $1

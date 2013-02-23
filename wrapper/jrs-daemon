@@ -1,0 +1,57 @@
+#!/bin/bash
+
+installroot=`readlink -f $0`
+installroot=`dirname $installroot`
+
+mode=$1
+if [ "x$mode" = "x" ]; then
+    mode=start
+fi
+
+. $installroot/jrs.conf
+host=`hostname`
+
+case "$mode" in
+
+    start)
+        if [ $host = $master ]; then
+            if [ -f ${pidpath}-master.pid ]; then
+                echo JRS metadata server is already running: pid `cat ${pidpath}-master.pid`.
+            else
+                echo -n Starting JRS metadata master...
+                $jrsbin -n -s $secret -l $((port + 1)) -p ${pidpath}-master.pid
+                if [ $? -eq 0 ]; then echo OK.; else echo Failed.; fi
+            fi
+        fi
+
+        grep -q $host $nodelist
+        if [ $? -eq 0 ]; then
+            if [ -f ${pidpath}-daemon.pid ]; then
+                echo JRS daemon is already running: pid `cat ${pidpath}-daemon.pid`.
+            else
+                echo -n Starting JRS daemon... 
+                $jrsbin -d -s $secret -l $port -p ${pidpath}-daemon.pid
+                if [ $? -eq 0 ]; then echo OK.; else echo Failed.; fi
+            fi
+        fi
+
+        ;;
+
+    stop)
+        if [ -f ${pidpath}-master.pid ]; then
+            kill `cat ${pidpath}-master.pid`
+        fi
+        if [ -f ${pidpath}-daemon.pid ]; then
+            kill `cat ${pidpath}-daemon.pid`
+        fi
+        sleep 1
+        if [ -f ${pidpath}-master.pid ]; then
+            kill -9 `cat ${pidpath}-master.pid`
+        fi
+        if [ -f ${pidpath}-daemon.pid ]; then
+            kill -9 `cat ${pidpath}-daemon.pid`
+        fi
+
+        ;;
+esac
+
