@@ -16,7 +16,8 @@ JRS is a (distant) little cousin to mature systems such as
 these systems in that it is extremely small and very simple to set up.
 
 JRS lives on the web at http://c1f.net/jrs/, and on GitHub at
-https://github.com/cfallin/jrs/.
+https://github.com/cfallin/jrs/. Packages for Debian can be found
+at http://c1f.net/jrs/packages/.
 
 Installation
 ============
