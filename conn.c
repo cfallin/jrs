@@ -280,17 +280,14 @@ static void
 assign_cores(jrs_server_t *server)
 {
     int cores;
-    jrs_metadata_user_t *user;
-
-    if (server->mgr.usercount == 0)
-        return;
+    jrs_conn_t *conn;
 
     /* get rid of old (aged-out) nodes first so our core count is accurate */
     age_out_nodes(server);
 
     /* reset allocations */
-    DLIST_FOREACH(&server->mgr.users, user) {
-        user->cores = 0;
+    DLIST_FOREACH(&server->conns, conn) {
+        conn->cores = 0;
     }
 
     /* go in rounds, assigning one core at a time to each user in turn. An user
@@ -298,13 +295,13 @@ assign_cores(jrs_server_t *server)
     cores = server->mgr.corecount;
     while (cores > 0) {
         int unmet_need = 0;
-        DLIST_FOREACH(&server->mgr.users, user) {
-            if (user->cores < user->needed) {
-                user->cores++;
+        DLIST_FOREACH(&server->conns, conn) {
+            if (conn->cores < conn->needed) {
+                conn->cores++;
                 cores--;
             }
-            if (user->cores < user->needed)
-                unmet_need += (user->needed - user->cores);
+            if (conn->cores < conn->needed)
+                unmet_need += (conn->needed - conn->cores);
         }
 
         /* we can stop early if everyone got the cores they wanted */
@@ -313,9 +310,9 @@ assign_cores(jrs_server_t *server)
     }
 
     jrs_log("assigned %d cores:", server->mgr.corecount);
-    DLIST_FOREACH(&server->mgr.users, user) {
-        jrs_log("user %s (%d connections) gets %d cores out of %d needed",
-                user->username, user->conns, user->cores, user->needed);
+    DLIST_FOREACH(&server->conns, conn) {
+        jrs_log("connection %s gets %d cores out of %d needed",
+                conn->clientname, conn->cores, conn->needed);
     }
 }
 
@@ -351,13 +348,15 @@ conn_cmd_ident(jrs_conn_t *conn, char *args, int len)
         user->needed = 0;
         user->cores = 0;
 
-        apr_hash_set(conn->server->mgr.userhash, args, len, user);
+        apr_hash_set(conn->server->mgr.userhash, args, strlen(args), user);
         DLIST_INSERT(DLIST_HEAD(&conn->server->mgr.users), user);
         conn->server->mgr.usercount++;
         jrs_log("usercount bumped to %d (new user %s)",
                 conn->server->mgr.usercount,
                 args);
     }
+    else
+        jrs_log("found user: '%s' (%d connections previously)", args, user->conns);
 
     /* bump the connection count. */
     user->conns++;
@@ -451,13 +450,13 @@ conn_cmd_requestcores(jrs_conn_t *conn, char *args, int len)
         return 1;
 
     /* update the requested core count */
-    conn->usermeta->needed = atoi(args);
+    conn->needed = atoi(args);
 
     /* recompute assignments */
     assign_cores(conn->server);
     
-    /* response: allocated core count (for this connection) */
-    snprintf(buf, sizeof(buf), "%d\r\n", conn->usermeta->cores / conn->usermeta->conns);
+    /* response: allocated core count for this connection */
+    snprintf(buf, sizeof(buf), "%d\r\n", conn->cores);
     jrs_sockstream_write(conn->sockstream, buf, strlen(buf));
 
     return 0;
@@ -478,20 +477,6 @@ conn_cmd_close(jrs_conn_t *conn)
     /* dec connection count and remove user if it reaches 0 */
     if (conn->usermeta) {
         conn->usermeta->conns--;
-        if (conn->usermeta->conns <= 0) {
-            DLIST_REMOVE(conn->usermeta);
-            /* remove from hash */
-            apr_hash_set(conn->server->mgr.userhash,
-                    conn->usermeta->username,
-                    strlen(conn->usermeta->username), NULL);
-            conn->server->mgr.usercount--;
-            if (conn->server->mgr.usercount < 0)
-                conn->server->mgr.usercount = 0;
-            jrs_log("disconnect from user '%s' (count now %d).",
-                    conn->usermeta->username,
-                    conn->server->mgr.usercount);
-            apr_pool_destroy(conn->usermeta->pool);
-        }
         conn->usermeta = NULL;
     }
 

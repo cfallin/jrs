@@ -42,6 +42,9 @@ struct jrs_conn_t {
     jrs_fifo_t *finishfifo;
 
     jrs_metadata_user_t *usermeta; /* for metadata server only */
+    
+    int needed; /* how many cores needed (maximally)? */
+    int cores;  /* how many cores allocated? */
 
     jrs_server_t *server;
     jrs_conn_t *next, *prev;
