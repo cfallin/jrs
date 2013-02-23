@@ -311,6 +311,12 @@ assign_cores(jrs_server_t *server)
         if (unmet_need == 0)
             break;
     }
+
+    jrs_log("assigned %d cores:", server->mgr.corecount);
+    DLIST_FOREACH(&server->mgr.users, user) {
+        jrs_log("user %s (%d connections) gets %d cores out of %d needed",
+                user->username, user->conns, user->cores, user->needed);
+    }
 }
 
 static int
@@ -319,6 +325,12 @@ conn_cmd_ident(jrs_conn_t *conn, char *args, int len)
     apr_status_t rv;
     apr_pool_t *pool = NULL;
     jrs_metadata_user_t *user;
+
+    if (conn->usermeta) {
+        /* early out */
+        jrs_sockstream_write(conn->sockstream, "\r\n", 2);
+        return 0;
+    }
 
     /* does the username already exist in the userhash? */
     user = apr_hash_get(conn->server->mgr.userhash, args, len);
