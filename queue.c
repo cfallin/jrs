@@ -711,18 +711,41 @@ cluster_run(cluster_t *cluster, cluster_policy_func_t policy)
 
             else if ((rflag || eflag || wflag) && node->state == NODESTATE_CONNECTED) {
                 if (handle_conn(node, rflag, eflag, wflag)) {
+                    req_t *req, *nreq;
+                    job_t *job, *njob;
+
                     /* connection failure of some sort. Destroy and recreate the
-                     * connection. If there was a current request outstanding,
-                     * reinsert it at the head of the queue. */
+                     * connection. Clear out any jobs running or sent and place
+                     * back on general queue. */
                     jrs_sockstream_destroy(node->sockstream);
                     close(node->sockfd);
                     node->sockstream = NULL;
                     node->state = NODESTATE_INIT;
                     jrs_log("connection to node '%s' failed or reset; will retry.",
                             node->hostname);
+
+                    /* clear out the request queue */
                     if (node->curreq) {
                         DLIST_INSERT(DLIST_HEAD(&node->reqs), node->curreq);
                         node->curreq = NULL;
+                    }
+                    for (req = DLIST_HEAD(&node->reqs); req != DLIST_END(&node->reqs);
+                            req = nreq) {
+                        nreq = DLIST_NEXT(req);
+                        if (req->job) {
+                            DLIST_INSERT(DLIST_TAIL(&cluster->jobs), req->job);
+                        }
+                        DLIST_REMOVE(req);
+                        apr_pool_destroy(req->pool);
+                    }
+
+                    /* put any jobs that were running here back on the general
+                     * queue */
+                    for (job = DLIST_HEAD(&node->jobs); job != DLIST_END(&node->jobs);
+                            job = njob) {
+                        njob = DLIST_NEXT(job);
+                        DLIST_REMOVE(job);
+                        DLIST_INSERT(DLIST_TAIL(&cluster->jobs), job);
                     }
                 }
             }
