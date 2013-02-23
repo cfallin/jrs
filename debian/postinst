@@ -1,1 +1,2 @@
+#!/bin/bash
 update-rc.d jrs-daemon defaults 99
