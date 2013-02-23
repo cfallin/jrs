@@ -363,12 +363,13 @@ out:
 static void
 req_done(req_t *req, uint8_t *buf, int len)
 {
-    if (req->node->mgr)
+    /*
     jrs_log("REQDONE (node '%s' mgr %d type '%c'):\n\t%s ->\n\t%s",
             req->node->hostname, req->node->mgr,
             req->type,
             req->req,
             buf);
+            */
 
     if (req->node->mgr) {
         switch (req->type) {
@@ -613,7 +614,6 @@ wait_connection(node_t *node)
         return;
     }
 
-    jrs_log("connected to '%s'", node->hostname);
     node->state = NODESTATE_CONNECTED;
 }
 

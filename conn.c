@@ -267,13 +267,18 @@ age_out_nodes(jrs_server_t *server)
             node = nnode) {
         nnode = DLIST_NEXT(node);
 
-        if ((now - node->lastseen) > 20*1000000) {
+        if ((now - node->lastseen) > 10*1000000) {
             DLIST_REMOVE(node);
+            char buf[1024];
             server->mgr.corecount -= node->cores;
             jrs_log("aging out old node '%s'.", node->hostname);
             apr_hash_set(server->mgr.nodehash, node->hostname,
                     strlen(node->hostname), NULL);
+            strncpy(buf, node->hostname, sizeof(buf));
             apr_pool_destroy(node->pool);
+            node = apr_hash_get(server->mgr.nodehash, buf,
+                    strlen(buf));
+            jrs_log("hashtable probe for '%s': %p", buf, node);
         }
     }
 }
@@ -405,6 +410,7 @@ conn_cmd_nodelist(jrs_conn_t *conn, char *args, int len)
 
             /* does an entry already exist? */
             node = apr_hash_get(conn->server->mgr.nodehash, hostname, strlen(hostname));
+            jrs_log("got node %p for hostname '%s' in nodehash", node, hostname);
             if (!node) {
                 rv = apr_pool_create(&pool, conn->server->pool);
                 if (rv != APR_SUCCESS)
