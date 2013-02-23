@@ -39,6 +39,8 @@ struct jrs_conn_t {
     char clientname[256];
     int inited;
 
+    jrs_fifo_t *finishfifo;
+
     jrs_metadata_user_t *usermeta; /* for metadata server only */
 
     jrs_server_t *server;

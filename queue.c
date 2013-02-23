@@ -203,6 +203,7 @@ cluster_ops_updatenode(node_t *node)
     else {
         enqueue_req(node, 'L', NULL, NULL, 0, NULL, 0, NULL);
         enqueue_req(node, 'S', NULL, NULL, 0, NULL, 0, NULL);
+        enqueue_req(node, 'F', NULL, NULL, 0, NULL, 0, NULL);
     }
 }
 
@@ -283,13 +284,16 @@ enqueue_req(node_t *node, char type, char *cmdline, char *cwd, uint64_t jobid,
                 req->job = job;
                 break;
             case 'K':
-                snprintf(buf, sizeof(buf), "K %ld 9\r\n", jobid);
+                snprintf(buf, sizeof(buf), "K %ld 15\r\n", jobid);
                 break;
             case 'L':
                 snprintf(buf, sizeof(buf), "L\r\n");
                 break;
             case 'S':
                 snprintf(buf, sizeof(buf), "S\r\n");
+                break;
+            case 'F':
+                snprintf(buf, sizeof(buf), "F\r\n");
                 break;
             default:
                 rv = APR_EINVAL;
@@ -402,12 +406,9 @@ req_done(req_t *req, uint8_t *buf, int len)
             case 'L':
                 {
                     job_t *job, *njob;
+                    req_t *r;
                     char *tok, *saveptr;
-
-                    /* clear the marks */
-                    DLIST_FOREACH(&req->node->jobs, job) {
-                        job->mark = 0;
-                    }
+                    uint64_t now = time_usec();
 
                     req->node->all_running = 0;
 
@@ -424,28 +425,64 @@ req_done(req_t *req, uint8_t *buf, int len)
                         int found = 0;
                         DLIST_FOREACH(&req->node->jobs, job) {
                             if (job->jobid == jobid) {
-                                job->mark = 1;
-                                found = 1;
+                                /* update its seen-on-compute-node timestamp. */
+                                job->seen_timestamp = now;
                                 break;
                             }
                         }
-
-                        /* if not currently running -- someone else's job.
-                         * Leave it. */
                     }
 
-                    /* for all jobs not marked, remove them from the list. */
+                    /* purge jobs older than threshold seen-timestamp */
                     for (job = DLIST_HEAD(&req->node->jobs);
                             job != DLIST_END(&req->node->jobs);
                             job = njob) {
                         njob = DLIST_NEXT(job);
-                        if (!job->mark) {
+
+                        /* take either the start-timestamp or seen-timestamp: if job
+                         * hasn't been started yet (ie its spawn is enqueued), we may
+                         * not have seen it in the list *yet* but we still have a recent
+                         * timestamp for it. */
+                        uint64_t last_ts = job->start_timestamp;
+                        if (job->seen_timestamp > 0) last_ts = job->seen_timestamp;
+                        if ((now - last_ts) > 20*1000*1000) {
+                            jrs_log("job %d disappeared from %s; moving back to queue.",
+                                    job->seq, job->node->hostname);
                             DLIST_REMOVE(job);
-                            apr_pool_destroy(job->pool);
+                            DLIST_INSERT(DLIST_HEAD(&job->node->cluster->jobs), job);
+                            job->state = JOBSTATE_QUEUED;
+                            job->node = NULL;
                         }
                     }
                 }
                 break;
+            case 'F':
+                /* finished job ids */
+                {
+                    job_t *job, *njob;
+                    req_t *r;
+                    char *tok, *saveptr;
+
+                    /* tokenize the list and examine each current jobid */
+                    for (tok = strtok_r(buf, " ", &saveptr);
+                            tok;
+                            tok = strtok_r(NULL, " ", &saveptr)) {
+                        uint64_t jobid = strtoull(tok, NULL, 10);
+
+                        /* is job currently running? */
+                        int found = 0;
+                        DLIST_FOREACH(&req->node->jobs, job) {
+                            if (job->jobid == jobid) {
+                                /* found it -- remove it from the list. */
+                                jrs_log("job %d completed.", job->seq);
+                                DLIST_REMOVE(job);
+                                apr_pool_destroy(job->pool);
+                                break;
+                            }
+                        }
+                    }
+                }
+                break;
+
             case 'S':
                 /* a status update */
                 {

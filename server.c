@@ -161,6 +161,13 @@ handle_listen(jrs_server_t *server)
         return;
     }
 
+    rv = jrs_fifo_create(&conn->finishfifo, 4096, subpool);
+    if (rv != APR_SUCCESS) {
+        close(sockfd);
+        apr_pool_destroy(subpool);
+        return;
+    }
+
     conn->pool = subpool;
     conn->socket = sockfd;
     conn->server = server;
@@ -260,6 +267,13 @@ handle_sigchld(jrs_server_t *server)
             /* a child exited. Find the matching job. */
             DLIST_FOREACH(&server->jobs, job) {
                 if (job->pid == pid) {
+
+                    /* write to finish fifo of spawning connection */
+                    if(job->spawned_conn)
+                        jrs_fifo_write(job->spawned_conn->finishfifo,
+                                (uint8_t *)&job->id,
+                                sizeof(uint64_t));
+
                     jrs_log("job pid %d is done", job->pid);
                     DLIST_REMOVE(job);
                     /* this frees *job as well */

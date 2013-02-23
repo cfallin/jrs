@@ -61,6 +61,7 @@ conn_cmd_new(jrs_conn_t *conn, char *args, int len)
     job->pool = subpool;
     job->id = ++conn->server->jobid;
     job->server = conn->server;
+    job->spawned_conn = conn;
     job->done = 0;
 
     /* split the command-line arguments by spaces. */
@@ -93,14 +94,17 @@ conn_cmd_new(jrs_conn_t *conn, char *args, int len)
         dup2(fd, 1);
         dup2(fd, 2);
 
+        /* new process group. This way, any children spawned by the job will
+         * die when the job dies (if the job is killed). */
+        setsid();
+        setpgrp();
+
         rc = execvp(argv[0], argv);
         if (rc != 0) exit(1);
     }
 
     /* in parent */
     job->pid = pid;
-
-    job->spawned_conn = conn;
 
     /* add to jobs list */
     DLIST_INSERT(DLIST_TAIL(&conn->server->jobs), job);
@@ -218,6 +222,34 @@ conn_cmd_stats(jrs_conn_t *conn)
     len = snprintf(line, sizeof(line), "%d %0.2f %ld\r\n", cores, loadavg, memory);
     jrs_sockstream_write(conn->sockstream, line, len);
 
+    return 0;
+}
+
+static int
+conn_cmd_finished(jrs_conn_t *conn)
+{
+    /* return all jobids which have finished since last such command on this
+     * conn */
+
+    char line[65536];
+    char *p = line;
+    int remaining = sizeof(line);
+
+    while (jrs_fifo_avail(conn->finishfifo) >= 8) {
+        uint64_t jobid;
+        int len;
+
+        if (jrs_fifo_read(conn->finishfifo, (uint8_t *)&jobid, 8) < 8)
+            return 1;
+
+        len = snprintf(p, remaining, "%ld ", jobid);
+        p += len;
+        remaining -= len;
+    }
+    snprintf(p, remaining, "\r\n");
+
+    jrs_sockstream_write(conn->sockstream, line, strlen(line));
+    
     return 0;
 }
 
@@ -443,7 +475,9 @@ conn_cmd_close(jrs_conn_t *conn)
         jrs_job_t *job;
         DLIST_FOREACH(&conn->server->jobs, job) {
             if (job->spawned_conn == conn) {
-                kill(job->pid, 9);
+                jrs_log("spawned job pid %d being killed due to closed connection (%s)",
+                        job->pid, conn->clientname);
+                kill(job->pid, 15);
                 job->spawned_conn = NULL;
             }
         }
@@ -469,6 +503,9 @@ conn_cmd(jrs_conn_t *conn, char *buf, int len)
 
             case 'S': /* report system stats */
                 return conn_cmd_stats(conn);
+
+            case 'F': /* report finished jobs */
+                return conn_cmd_finished(conn);
         }
     }
     else if (conn->server->mode == SERVERMODE_MGR) {

@@ -43,6 +43,8 @@ struct job_t {
 
     /* timestamp of last job start */
     uint64_t start_timestamp;
+    /* timestamp last seen in server's (L)ist */
+    uint64_t seen_timestamp;
 
     char *cmdline, *cwd;
 

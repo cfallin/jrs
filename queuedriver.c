@@ -129,10 +129,12 @@ queue_policy(cluster_t *cluster, cluster_ops_t *ops)
                     node->all_running > node->cores &&
                     rand_coinflip(0.1)) {
                 job_t *j = DLIST_HEAD(&node->jobs);
+                /*
                 jrs_log("node '%s' is overcommited: running %d of our jobs, %d total, on %d cores",
                         node->hostname, node->running, node->all_running, node->cores);
-                ops->removejob(j);
                 jrs_log("removed job %d from node '%s'", j->jobid, node->hostname);
+                        */
+                ops->removejob(j);
             }
         }
 
@@ -148,6 +150,11 @@ queue_policy(cluster_t *cluster, cluster_ops_t *ops)
                 node->running++;
             }
             sent += node->sent;
+            /*
+            jrs_log("node %s: %d running, %d all_running, %d sent",
+                    node->hostname,
+                    node->running, node->all_running, node->sent);
+                    */
         }
 
         queued = 0;
@@ -184,7 +191,19 @@ queue_policy(cluster_t *cluster, cluster_ops_t *ops)
             /* find any node with an open core that we haven't committed yet. */
             int sent = 0;
             DLIST_FOREACH(&cluster->nodes, node) {
-                if (node->all_running + node->sent < node->cores) {
+                /* pick the higher of all_running (which is the latest job
+                 * count at this node reflected by the (L)ist command, but may
+                 * not be quite up to date), or running (which is our count of
+                 * our own jobs for which we've gotten spawn confirmation, but
+                 * may not be after the latest list) to represent the number of
+                 * total jobs currently at this machine. Then add the number of
+                 * jobs 'sent' (those for which we've enqueued (N)ew commands
+                 * but haven't yet gotten spawn confirmation) to represent the
+                 * total number of jobs we know about that have been committed
+                 * to this machine. */
+                int r = node->all_running;
+                if (node->running > r) r = node->running;
+                if (r + node->sent < node->cores) {
                     ops->sendjob(node, job);
                     sent = 1;
                     break;
@@ -192,7 +211,9 @@ queue_policy(cluster_t *cluster, cluster_ops_t *ops)
             }
 
             if (sent) {
+                /*
                 jrs_log("sent job %d to node '%s'.", job->seq, job->node->hostname);
+                */
                 job->start_timestamp = time_usec();
             }
             else
@@ -214,8 +235,10 @@ queue_policy(cluster_t *cluster, cluster_ops_t *ops)
 
             /* kill it */
             if (mostrecent) {
+                /*
                 jrs_log("reducing footprint: removed job %ld from node '%s'.",
                         mostrecent->seq, mostrecent->node->hostname);
+                        */
                 mostrecent->node->running--;
                 mostrecent->node->all_running--;
                 ops->removejob(mostrecent);
