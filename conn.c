@@ -279,31 +279,37 @@ age_out_nodes(jrs_server_t *server)
 static void
 assign_cores(jrs_server_t *server)
 {
-    int cores_per_user;
-    int alloced_cores;
-    int remainder;
+    int cores;
     jrs_metadata_user_t *user;
 
     if (server->mgr.usercount == 0)
         return;
 
+    /* get rid of old (aged-out) nodes first so our core count is accurate */
     age_out_nodes(server);
 
-    /* cores are divided evenly per user. */
-    cores_per_user = server->mgr.corecount / server->mgr.usercount;
-    /* a few users get lucky with the remainder cores */
-    remainder = server->mgr.corecount % server->mgr.usercount;
-
-    jrs_log("assigning cores: %d cores total, %d users -> %d cores/user, %d remainder",
-            server->mgr.corecount, server->mgr.usercount, cores_per_user,
-            remainder);
-
+    /* reset allocations */
     DLIST_FOREACH(&server->mgr.users, user) {
-        user->cores = cores_per_user;
-        if (remainder > 0) {
-            user->cores++;
-            remainder--;
+        user->cores = 0;
+    }
+
+    /* go in rounds, assigning one core at a time to each user in turn. An user
+     * stops getting cores once their requested count is met. */
+    cores = server->mgr.corecount;
+    while (cores > 0) {
+        int unmet_need = 0;
+        DLIST_FOREACH(&server->mgr.users, user) {
+            if (user->cores < user->needed) {
+                user->cores++;
+                cores--;
+            }
+            if (user->cores < user->needed)
+                unmet_need += (user->needed - user->cores);
         }
+
+        /* we can stop early if everyone got the cores they wanted */
+        if (unmet_need == 0)
+            break;
     }
 }
 
