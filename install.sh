@@ -9,7 +9,7 @@ if [ $# -lt 0 ]; then
 fi
 
 mkdir -p $installpath
-cp wrapper/* $installpath/
+cp scripts/* $installpath/
 cp jrs $installpath/
 chown nobody $installpath/jrs
 chmod 6711 $installpath/jrs
