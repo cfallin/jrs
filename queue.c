@@ -446,8 +446,10 @@ req_done(req_t *req, uint8_t *buf, int len)
                         uint64_t last_ts = job->start_timestamp;
                         if (job->seen_timestamp > 0) last_ts = job->seen_timestamp;
                         if ((now - last_ts) > 20*1000*1000) {
+                            /*
                             jrs_log("job %d disappeared from %s; moving back to queue.",
                                     job->seq, job->node->hostname);
+                                    */
                             DLIST_REMOVE(job);
                             DLIST_INSERT(DLIST_HEAD(&job->node->cluster->jobs), job);
                             job->state = JOBSTATE_QUEUED;
@@ -474,7 +476,7 @@ req_done(req_t *req, uint8_t *buf, int len)
                         DLIST_FOREACH(&req->node->jobs, job) {
                             if (job->jobid == jobid) {
                                 /* found it -- remove it from the list. */
-                                jrs_log("job %d completed.", job->seq);
+                                /*jrs_log("job %d completed.", job->seq);*/
                                 DLIST_REMOVE(job);
                                 apr_pool_destroy(job->pool);
                                 break;
