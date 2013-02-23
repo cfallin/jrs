@@ -6,7 +6,7 @@ dir=`mktemp -d`
 
 cd $dir
 cp -R $wd $dir/jrs-$vers
-tar jcvf jrs_$vers.tar.bz2 --exclude ".*" jrs-$vers/
+tar jcvf jrs_$vers.orig.tar.bz2 --exclude ".*" jrs-$vers/
 cd jrs-$vers
 debuild
 cd ..
