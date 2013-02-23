@@ -1,4 +1,4 @@
-VERSION=-1.0
+VERSION=1.0
 
 build:
 	scons
@@ -14,4 +14,4 @@ install:
 	ln -s /usr/bin/jrs-daemon ${DESTDIR}/etc/init.d/jrs-daemon
 
 dist:
-	(cd ..; tar jcvf jrs${VERSION}.tar.bz2 --exclude ".*" jrs${VERSION}/)
+	(cd ..; tar jcvf jrs_${VERSION}.tar.bz2 --exclude ".*" jrs-${VERSION}/)
