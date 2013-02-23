@@ -244,6 +244,17 @@ main(int argc,
             return 1;
         }
 
+        if (!option_foreground) {
+            struct passwd *pw;
+
+            /* drop to 'nobody' */
+            pw = getpwnam("nobody");
+            if (pw) {
+                setuid(pw->pw_uid);
+                setgid(pw->pw_gid);
+            }
+        }
+
         /* Set up signal handlers */
         apr_signal(SIGTERM, handle_shutdown_signal);
         apr_signal(SIGSTOP, handle_shutdown_signal);

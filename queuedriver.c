@@ -150,11 +150,9 @@ queue_policy(cluster_t *cluster, cluster_ops_t *ops)
                 node->running++;
             }
             sent += node->sent;
-            /*
             jrs_log("node %s: %d running, %d all_running, %d sent",
                     node->hostname,
                     node->running, node->all_running, node->sent);
-                    */
         }
 
         queued = 0;

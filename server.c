@@ -25,6 +25,7 @@ jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port,
     apr_status_t rv = 0;
     struct sockaddr_in sin;
     struct timeval tv;
+    int optval = 1;
 
     rv = apr_pool_create(&subpool, pool);
     if (rv != APR_SUCCESS)
@@ -58,6 +59,9 @@ jrs_server_init(jrs_server_t **server, apr_pool_t *pool, int port,
         rv = APR_FROM_OS_ERROR(errno);
         goto out;
     }
+
+    /* allow reuse of listen port right away if server restarts */
+    setsockopt(ret->socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
 
     memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;

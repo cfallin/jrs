@@ -336,6 +336,9 @@ conn_cmd_ident(jrs_conn_t *conn, char *args, int len)
         apr_hash_set(conn->server->mgr.userhash, args, len, user);
         DLIST_INSERT(DLIST_HEAD(&conn->server->mgr.users), user);
         conn->server->mgr.usercount++;
+        jrs_log("usercount bumped to %d (new user %s)",
+                conn->server->mgr.usercount,
+                args);
     }
 
     /* bump the connection count. */
@@ -464,7 +467,11 @@ conn_cmd_close(jrs_conn_t *conn)
                     conn->usermeta->username,
                     strlen(conn->usermeta->username), NULL);
             conn->server->mgr.usercount--;
-            jrs_log("disconnect from user '%s'.", conn->usermeta->username);
+            if (conn->server->mgr.usercount < 0)
+                conn->server->mgr.usercount = 0;
+            jrs_log("disconnect from user '%s' (count now %d).",
+                    conn->usermeta->username,
+                    conn->server->mgr.usercount);
             apr_pool_destroy(conn->usermeta->pool);
         }
         conn->usermeta = NULL;

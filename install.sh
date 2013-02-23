@@ -11,7 +11,5 @@ fi
 mkdir -p $installpath
 cp scripts/* $installpath/
 cp jrs $installpath/
-chown -R nobody $installpath/
-chmod 6755 $installpath/jrs
 
 ln -s $installpath/jrs-submit /usr/local/bin
