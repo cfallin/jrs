@@ -1,6 +1,6 @@
 #!/bin/bash
 
-vers=1.0
+vers=2.0
 wd=`pwd`
 dir=`mktemp -d`
 
@@ -10,6 +10,7 @@ tar jcvf jrs_$vers.orig.tar.bz2 --exclude ".*" jrs-$vers/
 cd jrs-$vers
 debuild
 cd ..
-cp *.deb $wd/
+mkdir $wd/deb/
+cp jrs* $wd/deb/
 cd $wd
 rm -rf $dir

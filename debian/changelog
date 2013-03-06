@@ -1,3 +1,9 @@
+jrs (2.0-1) unstable; urgency=low
+
+  * Update to version 2.0.
+
+ -- Chris Fallin <cfallin@c1f.net>  Tue, 5 Mar 2013 19:14:51 -0500
+
 jrs (1.0-1) unstable; urgency=low
 
   * Initial release
