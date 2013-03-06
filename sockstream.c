@@ -1,6 +1,9 @@
 #include "sockstream.h"
 #include <sys/socket.h>
 #include <assert.h>
+#include <stdio.h>
+
+//#define DEBUG
 
 apr_status_t
 jrs_fifo_create(jrs_fifo_t **retfifo, int initsize, apr_pool_t *pool)
@@ -175,6 +178,8 @@ jrs_sockstream_create(jrs_sockstream_t **retsockstream, int sockfd,
     sockstream->pool = subpool;
     sockstream->err = 0;
     sockstream->read_lines = 0;
+    sockstream->read_hashes = 0;
+    sockstream->in_hash = -1;
 
     *retsockstream = sockstream;
 
@@ -241,9 +246,23 @@ jrs_sockstream_sendrecv(jrs_sockstream_t *sockstream, int rflag)
             sockstream->err = 1;
         }
 
-        for (i = 0; i < readbytes; i++)
-            if (b[i] == '\n')
-                sockstream->read_lines++;
+        /* update the newline and hash counts based on reader state machine */
+        for (i = 0; i < readbytes; i++) {
+            if (sockstream->in_hash == -1) {
+                /* normal line-reading mode: newline kicks us into hash mode */
+                if (b[i] == '\n') {
+                    sockstream->read_lines++;
+                    sockstream->in_hash = 0;
+                }
+            }
+            else if (sockstream->crypto) {
+                sockstream->in_hash++;
+                if (sockstream->in_hash == 20) { /* end of hash (SHA-1) */
+                    sockstream->read_hashes++;
+                    sockstream->in_hash = -1;
+                }
+            }
+        }
 
         if (readbytes <= 0) {
             if (errno == ECONNREFUSED) {
@@ -265,7 +284,13 @@ jrs_sockstream_closed(jrs_sockstream_t *sockstream)
 int
 jrs_sockstream_hasline(jrs_sockstream_t *sockstream)
 {
-    return sockstream->read_lines;
+    if (sockstream->crypto) {
+        /* in crypto mode, need the line PLUS the hash to verify. */
+        return sockstream->read_lines && sockstream->read_hashes;
+    }
+    else {
+        return sockstream->read_lines;
+    }
 }
 
 int
@@ -273,7 +298,17 @@ jrs_sockstream_read(jrs_sockstream_t *sockstream, uint8_t *buf, int size)
 {
     int readbytes = 0;
     if (sockstream->err)
-        return 1;
+        return 0;
+
+    /* if we're in encrypted mode, we must wait for a whole line
+     * and a hash to arrive; otherwise, the data we would have
+     * returned (a partial line) would not be verified. */
+    if (sockstream->crypto) {
+        int s = size;
+        int rv = jrs_sockstream_readline(sockstream, buf, &s);
+        if (rv) return 0;
+        return s;
+    }
 
     while (readbytes < size) {
         uint8_t *fifobuf;
@@ -296,6 +331,52 @@ jrs_sockstream_read(jrs_sockstream_t *sockstream, uint8_t *buf, int size)
     }
 
     return readbytes;
+}
+
+static int
+check_mac(jrs_sockstream_t *sockstream, uint8_t *buf, int size, int got_newline)
+{
+    /* update the SHA-1 hash */
+    SHA1_Update(&sockstream->recvhash, buf, size);
+
+    /* check the hash if we got a newline */
+    if (got_newline) {
+        uint8_t hash[20], recvhash[20];
+        int i;
+
+        SHA1_Final(hash, &sockstream->recvhash);
+
+        /* read the hash */
+        if (jrs_fifo_read(sockstream->readfifo, recvhash, 20) < 20)
+            return 1;
+        sockstream->read_hashes--;
+
+        /* error if no match (this will close the connection */
+        if (memcmp(hash, recvhash, 20))
+            return 1;
+
+#ifdef DEBUG
+        printf("MAC check: computed ");
+        for (i = 0; i < 20; i++)
+            printf("%02x ", hash[i]);
+        printf("received ");
+        for (i = 0; i < 20; i++)
+            printf("%02x ", recvhash[i]);
+        printf("\n");
+#endif
+
+        /* re-init the hash for the next line */
+        sockstream->recvlinecount++;
+        uint32_t initval = htonl(sockstream->recvlinecount);
+        SHA1_Init(&sockstream->recvhash);
+        SHA1_Update(&sockstream->recvhash, &initval, sizeof(initval));
+
+        /* everything OK */
+        return 0;
+    }
+    else {
+        return 0;
+    }
 }
 
 int
@@ -325,14 +406,69 @@ jrs_sockstream_readline(jrs_sockstream_t *sockstream, uint8_t *buf, int *size)
             break;
     }
 
+    /* too short buffer --> abort the connection. (HACK!) */
+    if (!got_newline && readbytes > 0) {
+        sockstream->err = 1;
+        return 1;
+    }
+
+    /* check the hash if we're in crypto mode */
+    if (check_mac(sockstream, buf, readbytes, got_newline)) {
+        sockstream->err = 1;
+        return 1;
+    }
+
     *size = readbytes;
     return 0;
+}
+
+static void
+add_mac(jrs_sockstream_t *sockstream, uint8_t *buf, int size)
+{
+    int i;
+    int newlines, newline_idx;
+
+    /* count newlines. sockstream_write must only be called with one
+     * newline at a time. */
+    for (i = 0, newlines = 0; i < size; i++) {
+        if (buf[i] == '\n') {
+            newlines++;
+            newline_idx = i;
+        }
+    }
+
+    assert(newlines <= 1);
+    /* if there was a newline, it must come at the end of the buf. */
+    if (newlines == 1)
+        assert(newline_idx == size - 1);
+
+    /* add the contents up to and including the newline to the
+     * line hash. */
+    SHA1_Update(&sockstream->linehash, buf, size);
+
+    /* if we got a newline, write out the hash to the write FIFO
+     * and reset the hash state. */
+    if (newlines) {
+        char buf[20];
+        SHA1_Final(buf, &sockstream->linehash);
+        jrs_fifo_write(sockstream->writefifo, buf, 20);
+
+        sockstream->linecount++;
+        uint32_t initval = htonl(sockstream->linecount);
+        SHA1_Init(&sockstream->linehash);
+        SHA1_Update(&sockstream->linehash, &initval, sizeof(initval));
+    }
 }
 
 int
 jrs_sockstream_write(jrs_sockstream_t *sockstream, uint8_t *buf, int size)
 {
     jrs_fifo_write(sockstream->writefifo, buf, size);
+    
+    /* in encrypted mode, we add a MAC (hash) at the end of every line. */
+    if (sockstream->crypto)
+        add_mac(sockstream, buf, size);
+
     return 0;
 }
 
@@ -349,4 +485,13 @@ jrs_sockstream_set_rc4(jrs_sockstream_t *sockstream,
     sockstream->crypto = 1;
     memcpy(&sockstream->writekey, sendkey, sizeof(RC4_KEY));
     memcpy(&sockstream->readkey,  recvkey, sizeof(RC4_KEY));
+
+    sockstream->linecount = 0;
+    uint32_t initval = 0;
+    SHA1_Init(&sockstream->linehash);
+    SHA1_Update(&sockstream->linehash, &initval, sizeof(initval));
+
+    sockstream->recvlinecount = 0;
+    SHA1_Init(&sockstream->recvhash);
+    SHA1_Update(&sockstream->recvhash, &initval, sizeof(initval));
 }

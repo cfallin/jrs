@@ -3,6 +3,7 @@
 
 #include <apr_general.h>
 #include <apr_pools.h>
+#include <openssl/sha.h>
 #include <openssl/rc4.h>
 
 typedef struct jrs_fifo_t {
@@ -29,9 +30,18 @@ typedef struct jrs_sockstream_t {
 
     jrs_fifo_t *readfifo, *writefifo;
     int read_lines; /* how many newline chars in read fifo? */
+    int read_hashes; /* how many hashes do we have in the read fifo? */
+    int in_hash; /* reader state at FIFO insertion: -1 for in a line, <n> for n bytes into hash */
 
     int crypto; /* crypto enabled? */
     RC4_KEY readkey, writekey;
+
+    /* we hash each line for integrity */
+    SHA_CTX linehash;
+    int linecount; /* each hash starts with the line count, incremented per line */
+
+    SHA_CTX recvhash;
+    int recvlinecount;
 
 } jrs_sockstream_t;
 
