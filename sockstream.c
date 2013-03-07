@@ -1,9 +1,6 @@
 #include "sockstream.h"
 #include <sys/socket.h>
 #include <assert.h>
-#include <stdio.h>
-
-#define DEBUG
 
 apr_status_t
 jrs_fifo_create(jrs_fifo_t **retfifo, int initsize, apr_pool_t *pool)
@@ -244,7 +241,6 @@ jrs_sockstream_sendrecv(jrs_sockstream_t *sockstream, int rflag)
             sockstream->err = 1;
         }
 
-        /* update the newline and hash counts based on reader state machine */
         for (i = 0; i < readbytes; i++)
             if (b[i] == '\n')
                 sockstream->read_lines++;
@@ -277,17 +273,7 @@ jrs_sockstream_read(jrs_sockstream_t *sockstream, uint8_t *buf, int size)
 {
     int readbytes = 0;
     if (sockstream->err)
-        return 0;
-
-    /* if we're in encrypted mode, we must wait for a whole line
-     * and a hash to arrive; otherwise, the data we would have
-     * returned (a partial line) would not be verified. */
-    if (sockstream->crypto) {
-        int s = size;
-        int rv = jrs_sockstream_readline(sockstream, buf, &s);
-        if (rv) return 0;
-        return s;
-    }
+        return 1;
 
     while (readbytes < size) {
         uint8_t *fifobuf;
@@ -310,70 +296,6 @@ jrs_sockstream_read(jrs_sockstream_t *sockstream, uint8_t *buf, int size)
     }
 
     return readbytes;
-}
-
-static int
-check_mac(jrs_sockstream_t *sockstream, uint8_t *buf, int size)
-{
-    /* find the hash and remove it from the line */
-    int newline_idx = -1;
-    int i;
-    uint8_t hash[20], recvhash[20];
-
-    printf("check_mac: buf '%s' size %d\n", buf, size);
-
-    for (i = 0; i < size; i++) {
-        if (buf[i] == '\n') {
-            newline_idx = i;
-            break;
-        }
-    }
-
-    /* if we didn't get a complete line, error */
-    if (newline_idx == -1) {
-        printf("no newline\n");
-        return 1;
-    }
-
-    /* if line is shorter than the hash should be, error */
-    if (newline_idx < 20) {
-        printf("newline idx = %d, wanted >= 20\n", newline_idx);
-        return 1;
-    }
-
-    memcpy(recvhash, buf + newline_idx - 20, 20);
-
-    buf[newline_idx - 20] = 0;
-    size -= 21;
-
-    /* update the SHA-1 hash up to (but not including) the hash/newline */
-    SHA1_Update(&sockstream->recvhash, buf, size);
-
-    /* check the hash */
-    SHA1_Final(hash, &sockstream->recvhash);
-
-#ifdef DEBUG
-    printf("MAC check: computed ");
-    for (i = 0; i < 20; i++)
-        printf("%02x ", hash[i]);
-    printf("received ");
-    for (i = 0; i < 20; i++)
-        printf("%02x ", recvhash[i]);
-    printf("\n");
-#endif
-
-    /* error if no match (this will close the connection */
-    if (memcmp(hash, recvhash, 20))
-        return 1;
-
-    /* re-init the hash for the next line */
-    sockstream->recvlinecount++;
-    uint32_t initval = htonl(sockstream->recvlinecount);
-    SHA1_Init(&sockstream->recvhash);
-    SHA1_Update(&sockstream->recvhash, &initval, sizeof(initval));
-
-    /* everything OK */
-    return 0;
 }
 
 int
@@ -403,85 +325,14 @@ jrs_sockstream_readline(jrs_sockstream_t *sockstream, uint8_t *buf, int *size)
             break;
     }
 
-    /* too short buffer --> abort the connection. (HACK!) */
-    if (!got_newline && readbytes > 0) {
-        sockstream->err = 1;
-        return 1;
-    }
-
-    /* check the hash if we're in crypto mode */
-    if (readbytes > 0 && check_mac(sockstream, buf, readbytes)) {
-        sockstream->err = 1;
-        return 1;
-    }
-
     *size = readbytes;
     return 0;
-}
-
-static void
-add_mac(jrs_sockstream_t *sockstream, uint8_t *buf, int size,
-        uint8_t *outbuf, int *outsize)
-{
-    int i;
-    int newlines, newline_idx;
-    int outcount = 0;
-
-    /* count newlines. sockstream_write must only be called with one
-     * newline at a time. */
-    for (i = 0, newlines = 0; i < size && outcount < *outsize; i++) {
-        if (buf[i] == '\n') {
-            outbuf[outcount++] = buf[i];
-            newlines++;
-            newline_idx = i;
-        }
-    }
-
-    printf("add_mac: buf '%s' size %d\n", buf, size);
-
-    assert(newlines <= 1);
-    /* if there was a newline, it must come at the end of the buf. */
-    if (newlines == 1)
-        assert(newline_idx == size - 1);
-
-    /* add the contents up to but not including the newline to the
-     * line hash. */
-    SHA1_Update(&sockstream->linehash, buf, newline_idx);
-
-    /* if we got a newline, append the hash to the line, add the newline char
-     * *after* the hash, and reset the hash state. */
-    if (newlines) {
-        char buf[20];
-        SHA1_Final(buf, &sockstream->linehash);
-
-        assert(outcount + 20 + 1 <= *outsize);
-        memcpy(outbuf + outcount, buf, *outsize - outcount);
-        outcount += 20;
-        outbuf[outcount++] = '\n';
-
-        sockstream->linecount++;
-        uint32_t initval = htonl(sockstream->linecount);
-        SHA1_Init(&sockstream->linehash);
-        SHA1_Update(&sockstream->linehash, &initval, sizeof(initval));
-    }
-
-    *outsize = outcount;
-
-    printf("add_mac: returning '%s' size %d\n", outbuf, *outsize);
 }
 
 int
 jrs_sockstream_write(jrs_sockstream_t *sockstream, uint8_t *buf, int size)
 {
-    if (sockstream->crypto) {
-        char ourbuf[4096];
-        int oursize = 4096;
-        add_mac(sockstream, buf, size, ourbuf, &oursize);
-        jrs_fifo_write(sockstream->writefifo, ourbuf, size);
-    }
-    else
-        jrs_fifo_write(sockstream->writefifo, buf, size);
-
+    jrs_fifo_write(sockstream->writefifo, buf, size);
     return 0;
 }
 
@@ -498,13 +349,4 @@ jrs_sockstream_set_rc4(jrs_sockstream_t *sockstream,
     sockstream->crypto = 1;
     memcpy(&sockstream->writekey, sendkey, sizeof(RC4_KEY));
     memcpy(&sockstream->readkey,  recvkey, sizeof(RC4_KEY));
-
-    sockstream->linecount = 0;
-    uint32_t initval = 0;
-    SHA1_Init(&sockstream->linehash);
-    SHA1_Update(&sockstream->linehash, &initval, sizeof(initval));
-
-    sockstream->recvlinecount = 0;
-    SHA1_Init(&sockstream->recvhash);
-    SHA1_Update(&sockstream->recvhash, &initval, sizeof(initval));
 }

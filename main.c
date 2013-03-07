@@ -181,7 +181,6 @@ main(int argc,
 
             case 'm':
                 option_mgr = strdup(option_arg);
-                break;
 
             case 'x':
                 option_joblist = NULL;
@@ -351,8 +350,10 @@ main(int argc,
         jrs_log("starting queue manager");
 
         /* populate the jobs */
-        if (queue_populate(cluster, &cluster_ops, option_joblist))
+        if (queue_populate(cluster, &cluster_ops, option_joblist)) {
+            jrs_log("Could not populate job list.");
             return 1;
+        }
 
         /* run the policy */
         cluster_run(cluster, queue_policy);

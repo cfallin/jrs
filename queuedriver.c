@@ -51,10 +51,8 @@ queue_populate(cluster_t *cluster, cluster_ops_t *ops, char *jobfile)
     char *s;
     FILE *f = fopen(jobfile, "r");
 
-    if (!f) {
-        jrs_log("Could not open job file '%s'.", jobfile);
+    if (!f)
         return 1;
-    }
 
     /* parse a condor-like jobfile */
     exe[0] = 0; args[0] = 0;

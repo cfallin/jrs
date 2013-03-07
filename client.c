@@ -123,8 +123,9 @@ jrs_client_run(jrs_client_t *client)
 
         /* send and receive whatever is available on the sockstream */
         int rflag = FD_ISSET(client->sockfd, &rfds);
-        if (jrs_sockstream_sendrecv(client->sockstream, rflag))
+        if (jrs_sockstream_sendrecv(client->sockstream, rflag)) {
             return; /* EOF */
+        }
 
         /* are we still negotiating crypto? */
         cryptostate = crypto_wait(client->sockstream, &client->crypto);
@@ -149,8 +150,9 @@ jrs_client_run(jrs_client_t *client)
         while (1) {
             uint8_t buf[1024];
             int size = read(0, buf, sizeof(buf));
-            if (size == 0 && FD_ISSET(0, &rfds))
+            if (size == 0 && FD_ISSET(0, &rfds)) {
                 return; /* EOF */
+            }
             FD_CLR(0, &rfds);
             if (size <= 0) break;
             jrs_sockstream_write(client->sockstream, buf, size);
