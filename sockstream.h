@@ -30,8 +30,6 @@ typedef struct jrs_sockstream_t {
 
     jrs_fifo_t *readfifo, *writefifo;
     int read_lines; /* how many newline chars in read fifo? */
-    int read_hashes; /* how many hashes do we have in the read fifo? */
-    int in_hash; /* reader state at FIFO insertion: -1 for in a line, <n> for n bytes into hash */
 
     int crypto; /* crypto enabled? */
     RC4_KEY readkey, writekey;

@@ -280,20 +280,20 @@ enqueue_req(node_t *node, char type, char *cmdline, char *cwd, uint64_t jobid,
     if (!node->mgr) {
         switch (type) {
             case 'N':
-                snprintf(buf, sizeof(buf), "N %s;%s\r\n", cwd, cmdline);
+                snprintf(buf, sizeof(buf), "N %s;%s\n", cwd, cmdline);
                 req->job = job;
                 break;
             case 'K':
-                snprintf(buf, sizeof(buf), "K %ld 15\r\n", jobid);
+                snprintf(buf, sizeof(buf), "K %ld 15\n", jobid);
                 break;
             case 'L':
-                snprintf(buf, sizeof(buf), "L\r\n");
+                snprintf(buf, sizeof(buf), "L\n");
                 break;
             case 'S':
-                snprintf(buf, sizeof(buf), "S\r\n");
+                snprintf(buf, sizeof(buf), "S\n");
                 break;
             case 'F':
-                snprintf(buf, sizeof(buf), "F\r\n");
+                snprintf(buf, sizeof(buf), "F\n");
                 break;
             default:
                 rv = APR_EINVAL;
@@ -303,7 +303,7 @@ enqueue_req(node_t *node, char type, char *cmdline, char *cwd, uint64_t jobid,
     else {
         switch (type) {
             case 'I':
-                snprintf(buf, sizeof(buf), "I %s\r\n", username);
+                snprintf(buf, sizeof(buf), "I %s\n", username);
                 break;
             case 'N':
                 {
@@ -324,11 +324,11 @@ enqueue_req(node_t *node, char type, char *cmdline, char *cwd, uint64_t jobid,
                             remaining -= len;
                         }
                     }
-                    len = snprintf(p, remaining, "\r\n");
+                    len = snprintf(p, remaining, "\n");
                 }
                 break;
             case 'R':
-                snprintf(buf, sizeof(buf), "R %d\r\n", cores);
+                snprintf(buf, sizeof(buf), "R %d\n", cores);
                 break;
             default:
                 rv = APR_EINVAL;

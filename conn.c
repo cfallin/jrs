@@ -129,7 +129,7 @@ conn_cmd_list(jrs_conn_t *conn)
         snprintf(buf, sizeof(buf), "%ld ", job->id);
         jrs_sockstream_write(conn->sockstream, buf, strlen(buf));
     }
-    jrs_sockstream_write(conn->sockstream, "\r\n", 2);
+    jrs_sockstream_write(conn->sockstream, "\n", 1);
 
     return 0;
 }
@@ -160,7 +160,7 @@ conn_cmd_kill(jrs_conn_t *conn, char *args, int len)
         }
     }
 
-    jrs_sockstream_write(conn->sockstream, "\r\n", 2);
+    jrs_sockstream_write(conn->sockstream, "\n", 1);
 
     return 0;
 }
@@ -219,7 +219,7 @@ conn_cmd_stats(jrs_conn_t *conn)
     else
         jrs_log("could not open /proc/meminfo");
 
-    len = snprintf(line, sizeof(line), "%d %0.2f %ld\r\n", cores, loadavg, memory);
+    len = snprintf(line, sizeof(line), "%d %0.2f %ld\n", cores, loadavg, memory);
     jrs_sockstream_write(conn->sockstream, line, len);
 
     return 0;
@@ -246,7 +246,7 @@ conn_cmd_finished(jrs_conn_t *conn)
         p += len;
         remaining -= len;
     }
-    snprintf(p, remaining, "\r\n");
+    snprintf(p, remaining, "\n");
 
     jrs_sockstream_write(conn->sockstream, line, strlen(line));
     
@@ -311,7 +311,7 @@ conn_cmd_ident(jrs_conn_t *conn, char *args, int len)
 
     if (conn->usermeta) {
         /* early out */
-        jrs_sockstream_write(conn->sockstream, "\r\n", 2);
+        jrs_sockstream_write(conn->sockstream, "\n", 2);
         return 0;
     }
 
@@ -347,7 +347,7 @@ conn_cmd_ident(jrs_conn_t *conn, char *args, int len)
     conn->usermeta = user;
 
     /* acknowledge */
-    jrs_sockstream_write(conn->sockstream, "\r\n", 2);
+    jrs_sockstream_write(conn->sockstream, "\n", 2);
 
     return 0;
 
@@ -365,8 +365,8 @@ conn_cmd_nodelist(jrs_conn_t *conn, char *args, int len)
     /* tokenize the node list and insert/update timestamps/core counts */
     char *tok, *saveptr;
     char *prevtok = NULL;
-    for (tok = strtok_r(args, " \r\n", &saveptr);
-            tok; tok = strtok_r(NULL, " \r\n", &saveptr)) {
+    for (tok = strtok_r(args, " \n", &saveptr);
+            tok; tok = strtok_r(NULL, " \n", &saveptr)) {
 
         /* take tokens in pairs */
         if (!prevtok) {
@@ -412,7 +412,7 @@ conn_cmd_nodelist(jrs_conn_t *conn, char *args, int len)
     }
 
     /* ack */
-    jrs_sockstream_write(conn->sockstream, "\r\n", 2);
+    jrs_sockstream_write(conn->sockstream, "\n", 2);
 
     return 0;
 }
@@ -436,7 +436,7 @@ conn_cmd_requestcores(jrs_conn_t *conn, char *args, int len)
     assign_cores(conn->server);
     
     /* response: allocated core count for this connection */
-    snprintf(buf, sizeof(buf), "%d\r\n", conn->cores);
+    snprintf(buf, sizeof(buf), "%d\n", conn->cores);
     jrs_sockstream_write(conn->sockstream, buf, strlen(buf));
 
     return 0;
