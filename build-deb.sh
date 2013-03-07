@@ -1,6 +1,6 @@
 #!/bin/bash
 
-vers=2.0
+vers=3.0
 wd=`pwd`
 dir=`mktemp -d`
 
