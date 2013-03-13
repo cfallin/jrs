@@ -1,6 +1,6 @@
 #!/bin/bash
 
-vers=3.1
+vers=`cat VERSION`
 wd=`pwd`
 dir=`mktemp -d`
 
