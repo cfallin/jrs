@@ -8,6 +8,8 @@
 #include "sockstream.h"
 #include "crypto.h"
 
+extern int shutdown_nojobs_signal;
+
 struct job_t;
 typedef struct job_t job_t;
 struct node_t;

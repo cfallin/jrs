@@ -186,6 +186,9 @@ queue_policy(cluster_t *cluster, cluster_ops_t *ops)
         jrs_log("queued: %d; running: %d; req'd cores: %d; alloc'd cores: %d",
                 queued, running, cluster->req_cores, cluster->alloced_cores);
 
+        if ((running + queued) == 0)
+            shutdown_nojobs_signal = 1;
+
         /* should we send jobs to cores? */
         while (delta > 0) {
             /* pick a job off the queue */

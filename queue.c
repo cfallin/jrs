@@ -16,6 +16,8 @@
 #include <fcntl.h>
 #include <stdlib.h>
 
+int shutdown_nojobs_signal = 0;
+
 static job_t *cluster_ops_createjob(cluster_t *cluster, char *cwd, char *cmdline);
 static void cluster_ops_updatenode(node_t *node);
 static void cluster_ops_sendjob(node_t *node, job_t *job);
@@ -676,6 +678,7 @@ cluster_run(cluster_t *cluster, cluster_policy_func_t policy)
          * and all sockstreams have empty write FIFOs, we're done. */
         if (killing) {
             int ready_to_quit = 1;
+
             DLIST_FOREACH(&cluster->nodes, node) {
                 if (node->sockstream &&
                         jrs_fifo_avail(node->sockstream->writefifo)) {
@@ -691,6 +694,10 @@ cluster_run(cluster_t *cluster, cluster_policy_func_t policy)
             if (ready_to_quit)
                 break;
         }
+
+        /* if no more jobs, were done. */
+        if (shutdown_nojobs_signal)
+            break;
 
         /* for each node, check connection state. Build fd sets for select(). */
         FD_ZERO(&rfds);
