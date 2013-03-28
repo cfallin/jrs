@@ -6,7 +6,7 @@ Summary:	Job-Running System
 Group:		Application/System
 License:	GPLv2+
 URL:		http://c1f.net/jrs
-Source:     http://c1f.net/jrs/packages/jrs-3.1.tar.bz2
+Source:     http://c1f.net/jrs/packages/jrs-3.2.tar.bz2
 
 BuildRequires:	apr-devel openssl-devel
 Requires:	apr openssl
