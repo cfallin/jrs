@@ -206,10 +206,10 @@ jrs_sockstream_sendrecv(jrs_sockstream_t *sockstream, int rflag)
             if (sockstream->crypto) {
                 uint8_t buf[1024];
                 RC4(&sockstream->writekey, datalen, data, buf);
-                written = send(sockstream->sockfd, buf, datalen, MSG_DONTWAIT | MSG_NOSIGNAL);
+                written = send(sockstream->sockfd, buf, datalen, MSG_DONTWAIT);
             }
             else {
-                written = send(sockstream->sockfd, data, datalen, MSG_DONTWAIT | MSG_NOSIGNAL);
+                written = send(sockstream->sockfd, data, datalen, MSG_DONTWAIT);
             }
             if (written > 0)
                 jrs_fifo_advance(sockstream->writefifo, written);
@@ -225,7 +225,7 @@ jrs_sockstream_sendrecv(jrs_sockstream_t *sockstream, int rflag)
         uint8_t buf[1024], buf2[1024], *b;
         int i;
 
-        readbytes = recv(sockstream->sockfd, &buf, sizeof(buf), MSG_DONTWAIT | MSG_NOSIGNAL);
+        readbytes = recv(sockstream->sockfd, &buf, sizeof(buf), MSG_DONTWAIT);
         if (readbytes > 0) {
             if (sockstream->crypto) {
                 RC4(&sockstream->readkey, readbytes, buf, buf2);

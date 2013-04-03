@@ -38,6 +38,11 @@ handle_shutdown_signal(int sig)
     shutdown_signal = 1;
 }
 
+void
+handle_sigpipe(int sig)
+{
+}
+
 static void
 usage()
 {
@@ -259,6 +264,7 @@ main(int argc,
         apr_signal(SIGTERM, handle_shutdown_signal);
         apr_signal(SIGSTOP, handle_shutdown_signal);
         apr_signal(SIGINT,  handle_shutdown_signal);
+        apr_signal(SIGPIPE, handle_sigpipe);
 
         if (option_mgrmode)
             jrs_log("starting metadata manager server");

@@ -1,12 +1,12 @@
 Name:       jrs
-Version:	3.3
+Version:	3.4
 Release:	1
 Summary:	Job-Running System
 
 Group:		Application/System
 License:	GPLv2+
 URL:		http://c1f.net/jrs
-Source:     http://c1f.net/jrs/packages/jrs-3.3.tar.bz2
+Source:     http://c1f.net/jrs/packages/jrs-3.4.tar.bz2
 
 BuildRequires:	apr-devel openssl-devel
 Requires:	apr openssl
