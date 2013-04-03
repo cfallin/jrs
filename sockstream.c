@@ -148,6 +148,7 @@ jrs_sockstream_create(jrs_sockstream_t **retsockstream, int sockfd,
     apr_pool_t *subpool;
     jrs_sockstream_t *sockstream;
     apr_status_t rv;
+    int set;
 
     rv = apr_pool_create(&subpool, pool);
     if (rv != APR_SUCCESS)
@@ -205,10 +206,10 @@ jrs_sockstream_sendrecv(jrs_sockstream_t *sockstream, int rflag)
             if (sockstream->crypto) {
                 uint8_t buf[1024];
                 RC4(&sockstream->writekey, datalen, data, buf);
-                written = send(sockstream->sockfd, buf, datalen, MSG_DONTWAIT);
+                written = send(sockstream->sockfd, buf, datalen, MSG_DONTWAIT | MSG_NOSIGNAL);
             }
             else {
-                written = send(sockstream->sockfd, data, datalen, MSG_DONTWAIT);
+                written = send(sockstream->sockfd, data, datalen, MSG_DONTWAIT | MSG_NOSIGNAL);
             }
             if (written > 0)
                 jrs_fifo_advance(sockstream->writefifo, written);
