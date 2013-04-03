@@ -225,7 +225,7 @@ jrs_sockstream_sendrecv(jrs_sockstream_t *sockstream, int rflag)
         uint8_t buf[1024], buf2[1024], *b;
         int i;
 
-        readbytes = recv(sockstream->sockfd, &buf, sizeof(buf), MSG_DONTWAIT);
+        readbytes = recv(sockstream->sockfd, &buf, sizeof(buf), MSG_DONTWAIT | MSG_NOSIGNAL);
         if (readbytes > 0) {
             if (sockstream->crypto) {
                 RC4(&sockstream->readkey, readbytes, buf, buf2);
